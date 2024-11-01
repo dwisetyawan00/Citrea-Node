@@ -43,61 +43,13 @@ if [[ "$OS" != *"Ubuntu"* ]] && [[ "$OS" != *"Debian"* ]]; then
     exit 1
 fi
 
-# Check Ubuntu version
-if [[ "$OS" == *"Ubuntu"* ]] && [ "${VER%.*}" -lt "20" ]; then
-    print_color "red" "This script requires Ubuntu 20.04 or higher"
-    print_color "red" "Your version: $VER"
-    exit 1
-fi
-
-print_color "green" "OS Check Passed: $OS $VER"
-
-# Check for root privileges
-if [ "$EUID" -ne 0 ]; then 
-    print_color "red" "Please run as root (use sudo)"
-    exit 1
-fi
-
-# Check system resources
-print_color "blue" "\nChecking system resources..."
-MEMORY=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
-MEMORY_GB=$((MEMORY/1024/1024))
-CPU_CORES=$(nproc)
-
-if [ $MEMORY_GB -lt 4 ]; then
-    print_color "red" "Warning: Your system has less than 4GB RAM ($MEMORY_GB GB)"
-    print_color "yellow" "Recommended: At least 4GB RAM"
-    read -p "Do you want to continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
-if [ $CPU_CORES -lt 2 ]; then
-    print_color "red" "Warning: Your system has less than 2 CPU cores ($CPU_CORES cores)"
-    print_color "yellow" "Recommended: At least 2 CPU cores"
-    read -p "Do you want to continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
 # Update system
 print_color "blue" "\nUpdating system packages..."
 apt update && apt upgrade -y
 
 # Install dependencies
 print_color "blue" "\nInstalling dependencies..."
-apt install -y curl build-essential git screen jq pkg-config libssl-dev libclang-dev ca-certificates gnupg lsb-release
-
-# Install Rust if not installed
-if ! command -v rustc &> /dev/null; then
-    print_color "yellow" "\nRust not found. Installing Rust..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source $HOME/.cargo/env
-fi
+apt install -y curl build-essential git screen jq pkg-config libssl-dev libclang-dev ca-certificates gnupg lsb-release wget
 
 # Create directory for Citrea
 print_color "blue" "\nCreating Citrea directory..."
@@ -105,9 +57,25 @@ mkdir -p $HOME/citrea
 cd $HOME/citrea
 
 # Download and set up the executable
-print_color "blue" "\nDownloading Citrea testnet executable..."
-wget -O citrea https://github.com/citrea/node/releases/download/v0.1.0/citrea-linux-amd64
+print_color "blue" "\nDownloading Citrea testnet executable v0.5.4..."
+EXECUTABLE_URL="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-x86_64-linux"
+
+if ! wget -O citrea $EXECUTABLE_URL; then
+    print_color "red" "Error downloading executable from $EXECUTABLE_URL"
+    print_color "yellow" "Please check the URL or download manually from:"
+    print_color "yellow" "https://github.com/chainwayxyz/citrea/releases/tag/v0.5.4"
+    exit 1
+fi
+
 chmod +x citrea
+
+# Verify executable
+if [ -f citrea ] && [ -x citrea ]; then
+    print_color "green" "Executable downloaded and set up successfully!"
+else
+    print_color "red" "Failed to set up executable properly"
+    exit 1
+fi
 
 # Get user input for node name
 print_color "yellow" "\nPlease enter your node name:"
@@ -161,6 +129,7 @@ print_color "blue" "\nNode Information:"
 print_color "green" "Node Name: $NODE_NAME"
 print_color "green" "Service Name: citread"
 print_color "green" "Directory: $HOME/citrea"
+print_color "green" "Version: v0.5.4"
 
 # Save node info to a file
 cat > $HOME/citrea/node_info.txt << EOL
@@ -168,6 +137,7 @@ Node Information:
 Node Name: $NODE_NAME
 Service Name: citread
 Directory: $HOME/citrea
+Version: v0.5.4
 Date Installed: $(date)
 OS: $OS $VER
 EOL
