@@ -29,30 +29,59 @@
 ```bash
 wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-setup.sh && chmod +x citrea-setup.sh && sudo ./citrea-setup.sh
 ```
+- Pilih 2 Manual
+  - Masukan nama node
+  - Enter biarkan default
 
 # 📝 Check Logs
 ```bash
-# View live logs
-journalctl -u citread -f
+tail -f citrea.log
+```
+# ⚙️ Service Management
+## Monitoring Status:
 
-# View last 100 lines
-journalctl -u citread -n 100
-
-# View today's logs
-journalctl -u citread --since today
+- Cek sync Citrea: 
+```bash
+curl -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:8080
+```
+- Cek Bitcoin node:
+```bash
+docker logs -f bitcoin-testnet4
 ```
 
-# ⚙️ Service Management
+## Troubleshooting:
+
+- Cek status container: 
 ```bash
-# Check status
-sudo systemctl status citread
+docker ps | grep bitcoin-testnet4
+```
+- Cek port: 
+```bash
+netstat -tulpn | grep -E '8080|18443'
+```
+- Cek resource usage: 
+```bash
+docker stats bitcoin-testnet4
+```
+## Restart Services:
 
-# Restart node
-sudo systemctl restart citread
+- Bitcoin: 
+```bash
+docker restart bitcoin-testnet4
+```
+- Citrea:
+```bash
+pkill -f citrea-v0.5.4-linux-amd64
+```
+```bash
+cd citrea-node
+./citrea-v0.5.4-linux-amd64 --da-layer bitcoin --rollup-config-path ./rollup_config.toml --genesis-paths ./genesis &
+```
 
-# Stop node
-sudo systemctl stop citread
-
-# Start node
-sudo systemctl start citread
+## Cleanup:
+```bash
+docker stop bitcoin-testnet4
+docker rm bitcoin-testnet4
+docker rmi bitcoin/bitcoin:28.0rc1
+rm -rf citrea-node/
 ```
