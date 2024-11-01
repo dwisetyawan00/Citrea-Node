@@ -155,29 +155,40 @@ generate_bitcoin_wallet() {
     show_progress "Generating Bitcoin wallet: $BTC_WALLET_NAME"
     CREATE_WALLET_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"createwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
-    # Verify wallet is loaded
-    WALLET_LIST=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    # Load wallet
+    LOAD_WALLET_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
     # Get new address
     BTC_ADDRESS_RESPONSE=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     BTC_ADDRESS=$(echo $BTC_ADDRESS_RESPONSE | jq -r '.result')
     
-    # Get wallet info
-    WALLET_INFO=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    # Get descriptors (including private keys)
-    DESCRIPTORS=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listdescriptors", "params": [true]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    # Save wallet info
-    echo "Bitcoin Testnet4 Wallet" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "Address: $BTC_ADDRESS" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "Wallet Info: $WALLET_INFO" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "Descriptors: $DESCRIPTORS" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    
-    show_progress "Bitcoin wallet generated and saved"
-    show_warning "Please fund this address with testnet4 BTC: $BTC_ADDRESS"
+    if [ -n "$BTC_ADDRESS" ]; then
+        # Get private key
+        PRIVKEY_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"dumpprivkey\", \"params\": [\"$BTC_ADDRESS\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+        BTC_PRIVKEY=$(echo $PRIVKEY_RESPONSE | jq -r '.result')
+        
+        # Get address info
+        ADDR_INFO_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"getaddressinfo\", \"params\": [\"$BTC_ADDRESS\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+        
+        # Get wallet info
+        WALLET_INFO=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+        
+        # Save wallet info
+        echo "Bitcoin Testnet4 Wallet" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Address: $BTC_ADDRESS" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Private Key: $BTC_PRIVKEY" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo -e "\nWallet Info:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "$WALLET_INFO" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo -e "\nAddress Info:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "$ADDR_INFO_RESPONSE" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        
+        show_progress "Bitcoin wallet generated and saved"
+        show_warning "Please fund this address with testnet4 BTC: $BTC_ADDRESS"
+    else
+        show_error "Failed to generate Bitcoin address"
+    fi
 }
 
 # Fungsi untuk generate EVM wallet
