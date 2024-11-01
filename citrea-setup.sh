@@ -1,234 +1,228 @@
 #!/bin/bash
 
-# Function to display colored text
-print_color() {
-    case $1 in
-        "green") COLOR="\033[0;32m" ;;
-        "red") COLOR="\033[0;31m" ;;
-        "yellow") COLOR="\033[0;33m" ;;
-        "blue") COLOR="\033[0;34m" ;;
-        *) COLOR="\033[0m" ;;
-    esac
-    NC="\033[0m"  # No Color
-    echo -e "${COLOR}$2${NC}"
+# Fungsi untuk menampilkan logo
+show_logo() {
+    curl -s https://raw.githubusercontent.com/dwisetyawan00/dwisetyawan00.github.io/main/logo.sh | bash
+    sleep 2
 }
 
-# Function to check command status
-check_status() {
-    if [ $? -eq 0 ]; then
-        print_color "green" "✓ $1 successful"
-    else
-        print_color "red" "✗ $1 failed"
-        exit 1
-    fi
-}
-
-# Function to display logo (modified to handle failure gracefully)
-display_logo() {
-    if ! curl -s https://raw.githubusercontent.com/dwisetyawan00/dwisetyawan00.github.io/main/logo.sh | bash; then
-        print_color "yellow" "Logo display failed, continuing with installation..."
-    fi
-}
-
-# Clear screen and display header
-clear
-display_logo
-sleep 2
-
-print_color "green" "=== Citrea Testnet Node Installation Script ==="
-print_color "yellow" "This script will help you install and configure your Citrea testnet node."
-
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then 
-    print_color "red" "Please run as root (use sudo)"
-    exit 1
-fi
-
-# Check OS compatibility
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    if [[ "$NAME" != *"Ubuntu"* ]] && [[ "$NAME" != *"Debian"* ]]; then
-        print_color "red" "This script requires Ubuntu/Debian. Your OS: $NAME"
-        exit 1
-    fi
-    if [ "${VERSION_ID%.*}" -lt 20 ]; then
-        print_color "red" "This script requires Ubuntu 20.04 or higher"
-        exit 1
-    fi
-else
-    print_color "red" "Cannot detect OS version"
-    exit 1
-fi
-
-# Update system packages
-print_color "blue" "\nUpdating system packages..."
-apt update && apt upgrade -y
-check_status "System update"
-
-# Install dependencies
-print_color "blue" "\nInstalling dependencies..."
-apt install -y curl build-essential git screen jq pkg-config libssl-dev \
-    libclang-dev ca-certificates gnupg lsb-release wget
-check_status "Dependencies installation"
-
-# Create and navigate to Citrea directory
-print_color "blue" "\nSetting up Citrea directory..."
-mkdir -p "$HOME/citrea"
-cd "$HOME/citrea" || exit 1
-check_status "Directory setup"
-
-# Function to download executable with multiple fallback methods
-download_executable() {
-    local url="$1"
-    local output="$2"
-    local methods=(
-        "wget --header='Accept: application/octet-stream' -q"
-        "curl -L -f"
-        "wget --no-check-certificate --header='User-Agent: Mozilla/5.0'"
-    )
+# Fungsi untuk input manual konfigurasi
+get_manual_config() {
+    echo "=== Konfigurasi Manual ==="
+    read -p "RPC User (default: citrea): " rpc_user
+    rpc_user=${rpc_user:-citrea}
     
-    for method in "${methods[@]}"; do
-        print_color "blue" "Trying download method: ${method% *}..."
-        if eval "$method \"$url\" -O \"$output\""; then
-            chmod +x "$output"
-            return 0
-        fi
-    done
+    read -p "RPC Password (default: citrea): " rpc_password
+    rpc_password=${rpc_password:-citrea}
     
-    print_color "red" "All download methods failed"
-    print_color "yellow" "Please download manually from:"
-    print_color "yellow" "https://github.com/chainwayxyz/citrea/releases/tag/v0.5.4"
-    return 1
+    read -p "RPC Port (default: 18443): " rpc_port
+    rpc_port=${rpc_port:-18443}
+    
+    read -p "Bitcoin Image Version (default: 28.0rc1): " btc_version
+    btc_version=${btc_version:-28.0rc1}
 }
 
-# Download Citrea executable
-EXECUTABLE_URL="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
-OUTPUT_FILE="$HOME/citrea/citrea-binary"  # Changed filename to avoid directory conflict
-
-print_color "blue" "\nDownloading Citrea executable..."
-download_executable "$EXECUTABLE_URL" "$OUTPUT_FILE"
-check_status "Executable download"
-
-# Verify executable
-if [ ! -x "$OUTPUT_FILE" ]; then
-    print_color "red" "Executable verification failed"
-    exit 1
-fi
-
-# Create configuration files
-print_color "blue" "\nCreating configuration files..."
-
-# Create genesis.json
-cat > genesis.json << 'EOL'
-{
-    "chain_id": "11822",
-    "initial_timestamp": "2024-01-01T00:00:00Z",
-    "initial_state_root": "0x0000000000000000000000000000000000000000000000000000000000000000"
-}
-EOL
-
-# Create rollup_config.toml
-cat > rollup_config.toml << 'EOL'
-network = "testnet"
-chain_id = 11822
-rollup_id = "testnet-rollup"
-da_layer = "mock"
-
-[layer1]
-rpc_url = "https://testnet-1.citrea.io"
-start_block = 0
-
-[da]
-rpc_url = "https://testnet-1.citrea.io"
-EOL
-
-# Get node name with validation
-while true; do
-    print_color "yellow" "\nEnter your node name (alphanumeric characters only):"
-    read -r NODE_NAME
-    if [[ "$NODE_NAME" =~ ^[a-zA-Z0-9]+$ ]]; then
-        break
-    else
-        print_color "red" "Invalid node name. Use only letters and numbers."
+# Fungsi untuk instalasi Docker
+install_docker() {
+    if ! command -v docker &> /dev/null; then
+        echo "Installing Docker..."
+        sudo apt update
+        sudo apt install -y docker.io docker-compose
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        sudo usermod -aG docker $USER
+        echo "Docker berhasil diinstall. Mohon logout dan login kembali untuk menggunakan Docker tanpa sudo."
+        need_relogin=true
     fi
-done
+}
 
-# Wallet setup with validation
-while true; do
-    print_color "yellow" "\nDo you want to create a new wallet or import existing one? (new/import)"
-    read -r WALLET_CHOICE
-    case "$WALLET_CHOICE" in
-        new)
-            print_color "blue" "\nCreating new wallet..."
-            "$OUTPUT_FILE" wallet new
-            break
+# Fungsi untuk instalasi dengan Docker - Executable
+install_docker_executable() {
+    echo "Memulai instalasi Docker dengan executable..."
+    
+    # Install Docker
+    install_docker
+    
+    if [ "$need_relogin" = true ]; then
+        echo "Mohon login ulang terlebih dahulu sebelum melanjutkan instalasi"
+        exit 0
+    fi
+
+    # Setup direktori
+    mkdir -p citrea-docker && cd citrea-docker
+    
+    # Download executable dan config
+    wget https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
+    curl https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml --output rollup_config.toml
+    
+    # Jalankan Bitcoin node
+    docker run -d \
+    --name bitcoin-testnet4 \
+    -p ${rpc_port}:${rpc_port} \
+    -p $((rpc_port + 1)):$((rpc_port + 1)) \
+    bitcoin/bitcoin:${btc_version} \
+    -printtoconsole \
+    -testnet4=1 \
+    -rest \
+    -rpcbind=0.0.0.0 \
+    -rpcallowip=0.0.0.0/0 \
+    -rpcport=${rpc_port} \
+    -rpcuser=${rpc_user} \
+    -rpcpassword=${rpc_password} \
+    -server \
+    -txindex=1
+}
+
+# Fungsi untuk instalasi dengan Docker - Source
+install_docker_source() {
+    echo "Memulai instalasi Docker dari source..."
+    
+    # Install Docker
+    install_docker
+    
+    if [ "$need_relogin" = true ]; then
+        echo "Mohon login ulang terlebih dahulu sebelum melanjutkan instalasi"
+        exit 0
+    fi
+
+    # Clone repository
+    git clone https://github.com/chainwayxyz/citrea
+    cd citrea
+    git fetch --tags
+    git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
+    
+    # Build image
+    docker build -t citrea .
+    
+    # Jalankan container
+    docker run -d \
+    --name citrea \
+    -p 8080:8080 \
+    citrea
+}
+
+# Fungsi untuk instalasi Rust - Executable
+install_rust_executable() {
+    echo "Memulai instalasi Rust dengan executable..."
+    
+    # Install Rust
+    if ! command -v rustc &> /dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source $HOME/.cargo/env
+    fi
+    
+    # Setup direktori
+    mkdir -p citrea-rust && cd citrea-rust
+    
+    # Download executable dan config
+    wget https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
+    chmod +x citrea-v0.5.4-linux-amd64
+    
+    # Download config
+    curl https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml --output rollup_config.toml
+}
+
+# Fungsi untuk instalasi Rust - Source
+install_rust_source() {
+    echo "Memulai instalasi Rust dari source..."
+    
+    # Install Rust
+    if ! command -v rustc &> /dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source $HOME/.cargo/env
+    fi
+    
+    # Install dependencies
+    sudo apt update
+    sudo apt install -y build-essential git curl
+    
+    # Clone repository
+    git clone https://github.com/chainwayxyz/citrea
+    cd citrea
+    git fetch --tags
+    git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
+    
+    # Build
+    make install-dev-tools
+    
+    echo "Pilih metode build:"
+    echo "1. Build tanpa ZK-Proofs"
+    echo "2. Build dengan ZK-Proofs (membutuhkan Docker)"
+    read -p "Pilihan Anda (1/2): " build_choice
+    
+    case $build_choice in
+        1)
+            SKIP_GUEST_BUILD=1 cargo build --release
             ;;
-        import)
-            print_color "yellow" "\nEnter your wallet recovery phrase:"
-            read -r RECOVERY_PHRASE
-            echo "$RECOVERY_PHRASE" | "$OUTPUT_FILE" wallet import
-            break
+        2)
+            REPR_GUEST_BUILD=1 cargo build --release
             ;;
         *)
-            print_color "red" "Invalid choice. Please enter 'new' or 'import'"
+            echo "Pilihan tidak valid"
+            exit 1
             ;;
     esac
-done
+}
 
-# Create systemd service with proper permissions
-print_color "blue" "\nCreating systemd service..."
-cat > /etc/systemd/system/citread.service << EOL
-[Unit]
-Description=Citrea Node
-After=network-online.target
-Wants=network-online.target
+# Menu utama
+clear
+show_logo
 
-[Service]
-User=$USER
-ExecStart=$OUTPUT_FILE node start --name $NODE_NAME --genesis-paths $HOME/citrea/genesis.json --rollup-config-path $HOME/citrea/rollup_config.toml
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-StandardOutput=journal
-StandardError=journal
+echo "=================================="
+echo "   Citrea Advanced Installation   "
+echo "=================================="
+echo "Pilih metode instalasi:"
+echo "1. Docker"
+echo "2. Rust"
+echo "3. Keluar"
+echo "=================================="
+read -p "Pilihan Anda (1/2/3): " install_method
 
-[Install]
-WantedBy=multi-user.target
-EOL
+case $install_method in
+    1|2)
+        echo "Pilih tipe instalasi:"
+        echo "1. Dari Executable (Recommended)"
+        echo "2. Dari Source Code"
+        read -p "Pilihan Anda (1/2): " install_type
+        
+        echo "Pilih konfigurasi:"
+        echo "1. Konfigurasi Default (Recommended)"
+        echo "2. Konfigurasi Manual"
+        read -p "Pilihan Anda (1/2): " config_type
+        
+        if [ "$config_type" = "2" ]; then
+            get_manual_config
+        else
+            rpc_user="citrea"
+            rpc_password="citrea"
+            rpc_port="18443"
+            btc_version="28.0rc1"
+        fi
+        
+        if [ "$install_method" = "1" ]; then
+            if [ "$install_type" = "1" ]; then
+                install_docker_executable
+            else
+                install_docker_source
+            fi
+        else
+            if [ "$install_type" = "1" ]; then
+                install_rust_executable
+            else
+                install_rust_source
+            fi
+        fi
+        ;;
+    3)
+        echo "Keluar dari installer"
+        exit 0
+        ;;
+    *)
+        echo "Pilihan tidak valid"
+        exit 1
+        ;;
+esac
 
-# Start the service
-print_color "blue" "\nStarting Citrea node service..."
-systemctl daemon-reload
-systemctl enable citread
-systemctl start citread
-check_status "Service startup"
-
-# Save node information
-NODE_INFO="$HOME/citrea/node_info.txt"
-cat > "$NODE_INFO" << EOL
-Node Information:
-Node Name: $NODE_NAME
-Service Name: citread
-Directory: $HOME/citrea
-Executable Path: $OUTPUT_FILE
-Version: v0.5.4
-Date Installed: $(date)
-OS: $NAME $VERSION_ID
-
-Configuration files:
-- genesis.json
-- rollup_config.toml
-EOL
-
-# Final output
-print_color "green" "\n=== Installation Complete ==="
-print_color "yellow" "Your Citrea node has been installed and started!"
-print_color "yellow" "Node information saved to: $NODE_INFO"
-print_color "yellow" "\nUseful commands:"
-print_color "blue" "Check node status: systemctl status citread"
-print_color "blue" "View logs: journalctl -u citread -f"
-print_color "blue" "Stop node: systemctl stop citread"
-print_color "blue" "Start node: systemctl start citread"
-print_color "blue" "Manual node start: $OUTPUT_FILE --genesis-paths $HOME/citrea/genesis.json --rollup-config-path $HOME/citrea/rollup_config.toml"
-
-exit 0
+echo "Instalasi selesai!"
+echo "Untuk verifikasi status sync:"
+echo "curl -X POST --header \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"citrea_syncStatus\",\"params\":[], \"id\":31}' http://0.0.0.0:8080"
