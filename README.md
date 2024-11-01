@@ -33,6 +33,38 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-set
   - Masukan nama node
   - Enter biarkan default
 
+# 👛 Generate Wallet
+### Create new wallet
+```bash
+curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "createwallet", "params": ["nama_wallet_baru"]}' -H 'content-type: text/plain;' http://0.0.0.0:18443
+```
+- Ganti "nama_wallet_baru" dengan nama wallet yang Anda inginkan
+### Memastikan wallet terload
+```bash
+curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:18443
+```
+### Get new address
+```bash
+curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:18443
+```
+# 🔑 Backup Private Key
+### Mendapatkan semua descriptor termasuk private key
+```bash
+curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listdescriptors", "params": [true]}' -H 'content-type: text/plain;' http://0.0.0.0:18443
+```
+### Untuk mendapatkan info detail wallet
+```bash
+curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:18443
+```
+
+# Untuk mendapatkan info detail address tertentu
+```bash
+curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getaddressinfo", "params": ["ADDRESS_YANG_DIDAPAT"]}' -H 'content-type: text/plain;' http://0.0.0.0:18443
+```
+- Ganti "ADDRESS_YANG_DIDAPAT" dengan address yang didapat dari command getnewaddress
+- Private key akan muncul dalam format tprv dari hasil listdescriptors
+- Simpan private key (tprv...) dengan aman karena ini adalah master key untuk wallet Anda
+
 # 📝 Check Logs
 ```bash
 tail -f citrea.log
