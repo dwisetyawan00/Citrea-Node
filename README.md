@@ -25,6 +25,46 @@
 | Download | ~1-2 GB | ~30-60 GB |
 | Upload | ~2-4 GB | ~60-120 GB |
 
+# Install Docker
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+### Install dependencies
+```bash
+sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
+```
+
+### Install Docker
+```bash
+sudo apt install -y docker.io
+```
+### Start dan enable Docker service
+```bash
+sudo systemctl start docker
+sudo systemctl enable docker
+```
+### Tambahkan user ke group docker
+```bash
+sudo usermod -aG docker $USER
+```
+### Install docker compose
+```bash
+sudo apt install -y docker-compose
+```
+### Verifikasi instalasi
+```bash
+docker --version
+docker-compose --version
+```
+### Exit dari VPS dan login kembali
+```bash
+exit
+```
+### Test pull image Bitcoin
+```bash
+docker pull bitcoin/bitcoin:28.0rc1
+```
 # ⚡ Quick Installation
 ```bash
 wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-setup.sh && chmod +x citrea-setup.sh && sudo ./citrea-setup.sh
