@@ -1,14 +1,38 @@
 #!/bin/bash
 
+# Warna untuk output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
 # Fungsi untuk menampilkan logo
 show_logo() {
     curl -s https://raw.githubusercontent.com/dwisetyawan00/dwisetyawan00.github.io/main/logo.sh | bash
     sleep 2
 }
 
+# Fungsi untuk menampilkan progress
+show_progress() {
+    echo -e "${GREEN}[+] $1${NC}"
+}
+
+# Fungsi untuk menampilkan error
+show_error() {
+    echo -e "${RED}[-] Error: $1${NC}"
+}
+
+# Fungsi untuk menampilkan warning
+show_warning() {
+    echo -e "${YELLOW}[!] Warning: $1${NC}"
+}
+
 # Fungsi untuk input manual konfigurasi
 get_manual_config() {
     echo "=== Konfigurasi Manual ==="
+    read -p "Nama Node (default: citrea-node): " node_name
+    node_name=${node_name:-citrea-node}
+    
     read -p "RPC User (default: citrea): " rpc_user
     rpc_user=${rpc_user:-citrea}
     
@@ -18,49 +42,60 @@ get_manual_config() {
     read -p "RPC Port (default: 18443): " rpc_port
     rpc_port=${rpc_port:-18443}
     
-    read -p "Bitcoin Image Version (default: 28.0rc1): " btc_version
-    btc_version=${btc_version:-28.0rc1}
+    read -p "Citrea Port (default: 8080): " citrea_port
+    citrea_port=${citrea_port:-8080}
+}
+
+# Fungsi untuk memeriksa dependensi
+check_dependencies() {
+    show_progress "Memeriksa dependensi..."
+    
+    # Install curl jika belum ada
+    if ! command -v curl &> /dev/null; then
+        show_warning "curl tidak ditemukan. Menginstall curl..."
+        sudo apt update
+        sudo apt install -y curl
+    fi
+
+    # Install wget jika belum ada
+    if ! command -v wget &> /dev/null; then
+        show_warning "wget tidak ditemukan. Menginstall wget..."
+        sudo apt update
+        sudo apt install -y wget
+    fi
 }
 
 # Fungsi untuk instalasi Docker
 install_docker() {
+    show_progress "Memeriksa instalasi Docker..."
+    
     if ! command -v docker &> /dev/null; then
-        echo "Installing Docker..."
+        show_progress "Menginstall Docker..."
         sudo apt update
         sudo apt install -y docker.io docker-compose
         sudo systemctl start docker
         sudo systemctl enable docker
         sudo usermod -aG docker $USER
-        echo "Docker berhasil diinstall. Mohon logout dan login kembali untuk menggunakan Docker tanpa sudo."
-        need_relogin=true
+        show_warning "Docker berhasil diinstall. Anda perlu logout dan login kembali."
+        show_warning "Script akan keluar. Jalankan kembali setelah login ulang."
+        exit 0
     fi
 }
 
-# Fungsi untuk instalasi dengan Docker - Executable
-install_docker_executable() {
-    echo "Memulai instalasi Docker dengan executable..."
+# Fungsi untuk menjalankan Bitcoin node
+run_bitcoin_node() {
+    show_progress "Menjalankan Bitcoin Testnet4 Node..."
     
-    # Install Docker
-    install_docker
+    # Hentikan container yang sudah ada jika ada
+    docker stop bitcoin-testnet4 2>/dev/null
+    docker rm bitcoin-testnet4 2>/dev/null
     
-    if [ "$need_relogin" = true ]; then
-        echo "Mohon login ulang terlebih dahulu sebelum melanjutkan instalasi"
-        exit 0
-    fi
-
-    # Setup direktori
-    mkdir -p citrea-docker && cd citrea-docker
-    
-    # Download executable dan config
-    wget https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
-    curl https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml --output rollup_config.toml
-    
-    # Jalankan Bitcoin node
     docker run -d \
     --name bitcoin-testnet4 \
+    --restart unless-stopped \
     -p ${rpc_port}:${rpc_port} \
     -p $((rpc_port + 1)):$((rpc_port + 1)) \
-    bitcoin/bitcoin:${btc_version} \
+    bitcoin/bitcoin:28.0rc1 \
     -printtoconsole \
     -testnet4=1 \
     -rest \
@@ -71,158 +106,118 @@ install_docker_executable() {
     -rpcpassword=${rpc_password} \
     -server \
     -txindex=1
+    
+    # Tunggu node startup
+    show_progress "Menunggu Bitcoin node startup..."
+    sleep 10
+    
+    # Verifikasi node
+    show_progress "Verifikasi Bitcoin node..."
+    if curl --silent --user ${rpc_user}:${rpc_password} --data-binary '{"jsonrpc": "1.0", "id": "curltest", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port} > /dev/null; then
+        show_progress "Bitcoin node berhasil dijalankan"
+    else
+        show_error "Bitcoin node gagal dijalankan"
+        exit 1
+    fi
 }
 
-# Fungsi untuk instalasi dengan Docker - Source
-install_docker_source() {
-    echo "Memulai instalasi Docker dari source..."
+# Fungsi untuk setup dan menjalankan Citrea
+setup_citrea() {
+    show_progress "Setting up Citrea..."
     
-    # Install Docker
-    install_docker
+    # Buat direktori
+    mkdir -p ${node_name} && cd ${node_name}
     
-    if [ "$need_relogin" = true ]; then
-        echo "Mohon login ulang terlebih dahulu sebelum melanjutkan instalasi"
-        exit 0
-    fi
-
-    # Clone repository
-    git clone https://github.com/chainwayxyz/citrea
-    cd citrea
-    git fetch --tags
-    git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
-    
-    # Build image
-    docker build -t citrea .
-    
-    # Jalankan container
-    docker run -d \
-    --name citrea \
-    -p 8080:8080 \
-    citrea
-}
-
-# Fungsi untuk instalasi Rust - Executable
-install_rust_executable() {
-    echo "Memulai instalasi Rust dengan executable..."
-    
-    # Install Rust
-    if ! command -v rustc &> /dev/null; then
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        source $HOME/.cargo/env
-    fi
-    
-    # Setup direktori
-    mkdir -p citrea-rust && cd citrea-rust
-    
-    # Download executable dan config
+    # Download binary
+    show_progress "Downloading Citrea binary..."
     wget https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
-    chmod +x citrea-v0.5.4-linux-amd64
     
     # Download config
+    show_progress "Downloading config files..."
     curl https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml --output rollup_config.toml
-}
-
-# Fungsi untuk instalasi Rust - Source
-install_rust_source() {
-    echo "Memulai instalasi Rust dari source..."
     
-    # Install Rust
-    if ! command -v rustc &> /dev/null; then
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        source $HOME/.cargo/env
+    # Download & extract genesis
+    show_progress "Downloading dan extracting genesis files..."
+    curl https://static.testnet.citrea.xyz/genesis.tar.gz --output genesis.tar.gz
+    tar -xzvf genesis.tar.gz
+    
+    # Set permission
+    chmod u+x ./citrea-v0.5.4-linux-amd64
+    
+    # Backup config file
+    cp rollup_config.toml rollup_config.toml.backup
+    
+    # Update config dengan nilai-nilai custom
+    sed -i "s/rpc_user = .*/rpc_user = \"${rpc_user}\"/" rollup_config.toml
+    sed -i "s/rpc_password = .*/rpc_password = \"${rpc_password}\"/" rollup_config.toml
+    sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
+    
+    show_progress "Menjalankan Citrea node..."
+    ./citrea-v0.5.4-linux-amd64 --da-layer bitcoin --rollup-config-path ./rollup_config.toml --genesis-paths ./genesis &
+    
+    # Tunggu node startup
+    sleep 10
+    
+    # Verifikasi Citrea node
+    show_progress "Verifikasi Citrea node..."
+    if curl -s -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:${citrea_port} > /dev/null; then
+        show_progress "Citrea node berhasil dijalankan"
+    else
+        show_error "Citrea node gagal dijalankan"
+        exit 1
     fi
-    
-    # Install dependencies
-    sudo apt update
-    sudo apt install -y build-essential git curl
-    
-    # Clone repository
-    git clone https://github.com/chainwayxyz/citrea
-    cd citrea
-    git fetch --tags
-    git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
-    
-    # Build
-    make install-dev-tools
-    
-    echo "Pilih metode build:"
-    echo "1. Build tanpa ZK-Proofs"
-    echo "2. Build dengan ZK-Proofs (membutuhkan Docker)"
-    read -p "Pilihan Anda (1/2): " build_choice
-    
-    case $build_choice in
-        1)
-            SKIP_GUEST_BUILD=1 cargo build --release
-            ;;
-        2)
-            REPR_GUEST_BUILD=1 cargo build --release
-            ;;
-        *)
-            echo "Pilihan tidak valid"
-            exit 1
-            ;;
-    esac
 }
 
-# Menu utama
+# Fungsi untuk menampilkan informasi node
+show_node_info() {
+    echo ""
+    echo "=== Informasi Node ==="
+    echo "Nama Node: ${node_name}"
+    echo "Bitcoin RPC: http://0.0.0.0:${rpc_port}"
+    echo "Citrea API: http://0.0.0.0:${citrea_port}"
+    echo ""
+    echo "Untuk cek status Bitcoin node:"
+    echo "curl --user ${rpc_user}:${rpc_password} --data-binary '{\"jsonrpc\": \"1.0\", \"id\": \"curltest\", \"method\": \"getblockcount\", \"params\": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}"
+    echo ""
+    echo "Untuk cek status Citrea sync:"
+    echo "curl -X POST --header \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"citrea_syncStatus\",\"params\":[], \"id\":31}' http://0.0.0.0:${citrea_port}"
+}
+
+# Main script
 clear
 show_logo
 
 echo "=================================="
-echo "   Citrea Advanced Installation   "
+echo "   Citrea Complete Installation   "
 echo "=================================="
-echo "Pilih metode instalasi:"
-echo "1. Docker"
-echo "2. Rust"
-echo "3. Keluar"
+echo "Pilih konfigurasi:"
+echo "1. Konfigurasi Default (Recommended)"
+echo "2. Konfigurasi Manual"
 echo "=================================="
-read -p "Pilihan Anda (1/2/3): " install_method
+read -p "Pilihan Anda (1/2): " config_choice
 
-case $install_method in
-    1|2)
-        echo "Pilih tipe instalasi:"
-        echo "1. Dari Executable (Recommended)"
-        echo "2. Dari Source Code"
-        read -p "Pilihan Anda (1/2): " install_type
-        
-        echo "Pilih konfigurasi:"
-        echo "1. Konfigurasi Default (Recommended)"
-        echo "2. Konfigurasi Manual"
-        read -p "Pilihan Anda (1/2): " config_type
-        
-        if [ "$config_type" = "2" ]; then
-            get_manual_config
-        else
-            rpc_user="citrea"
-            rpc_password="citrea"
-            rpc_port="18443"
-            btc_version="28.0rc1"
-        fi
-        
-        if [ "$install_method" = "1" ]; then
-            if [ "$install_type" = "1" ]; then
-                install_docker_executable
-            else
-                install_docker_source
-            fi
-        else
-            if [ "$install_type" = "1" ]; then
-                install_rust_executable
-            else
-                install_rust_source
-            fi
-        fi
+case $config_choice in
+    1)
+        node_name="citrea-node"
+        rpc_user="citrea"
+        rpc_password="citrea"
+        rpc_port="18443"
+        citrea_port="8080"
         ;;
-    3)
-        echo "Keluar dari installer"
-        exit 0
+    2)
+        get_manual_config
         ;;
     *)
-        echo "Pilihan tidak valid"
+        show_error "Pilihan tidak valid"
         exit 1
         ;;
 esac
 
-echo "Instalasi selesai!"
-echo "Untuk verifikasi status sync:"
-echo "curl -X POST --header \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"citrea_syncStatus\",\"params\":[], \"id\":31}' http://0.0.0.0:8080"
+# Mulai instalasi
+check_dependencies
+install_docker
+run_bitcoin_node
+setup_citrea
+show_node_info
+
+show_progress "Instalasi selesai!"
