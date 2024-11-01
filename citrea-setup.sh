@@ -10,6 +10,7 @@ NC='\033[0m'
 WALLET_DIR="$HOME/.citrea/wallets"
 BACKUP_DIR="$HOME/.citrea/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+WALLET_DATA_DIR="$HOME/.bitcoin/testnet4/wallets"
 
 # Fungsi untuk menampilkan logo
 show_logo() {
@@ -25,7 +26,7 @@ show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 # Fungsi untuk memeriksa dan install dependensi dasar
 check_dependencies() {
     show_progress "Memeriksa dependensi dasar..."
-    for pkg in curl wget jq; do
+    for pkg in curl wget jq gpg tar; do
         if ! command -v $pkg &> /dev/null; then
             show_warning "$pkg tidak ditemukan. Menginstall $pkg..."
             sudo apt update && sudo apt install -y $pkg
@@ -54,6 +55,48 @@ setup_wallet_directories() {
     mkdir -p "$WALLET_DIR"
     mkdir -p "$BACKUP_DIR"
     chmod 700 "$WALLET_DIR" "$BACKUP_DIR"
+}
+
+ensure_bitcoin_wallet() {
+    local wallet_name=$1
+    show_progress "Checking Bitcoin wallet: $wallet_name"
+    
+    # Check if wallet exists in list
+    local wallet_list=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    local wallet_exists=$(echo "$wallet_list" | jq -r '.result' | grep -w "$wallet_name" || echo "")
+    
+    if [ -z "$wallet_exists" ]; then
+        show_warning "Wallet $wallet_name tidak ditemukan. Membuat wallet baru..."
+        
+        # Create new wallet
+        local create_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"createwallet\", \"params\": [\"$wallet_name\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+        
+        if echo "$create_response" | jq -e '.error' > /dev/null; then
+            show_error "Gagal membuat wallet: $(echo "$create_response" | jq -r '.error.message')"
+            return 1
+        fi
+    fi
+    
+    # Load wallet
+    local load_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$wallet_name\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    # Check if wallet needs a new address
+    local address_list=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getaddressesbylabel", "params": [""]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if [ "$(echo "$address_list" | jq '.result | length')" -eq 0 ]; then
+        show_progress "Generating new address for wallet $wallet_name"
+        local new_address_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+        
+        if echo "$new_address_response" | jq -e '.error' > /dev/null; then
+            show_error "Gagal generate address: $(echo "$new_address_response" | jq -r '.error.message')"
+            return 1
+        fi
+        
+        local new_address=$(echo "$new_address_response" | jq -r '.result')
+        show_progress "New address generated: $new_address"
+    fi
+    
+    return 0
 }
 
 # Fungsi untuk validasi nama wallet
@@ -151,14 +194,13 @@ generate_bitcoin_wallet() {
         fi
     done
     
-    # Create wallet using curl
-    show_progress "Generating Bitcoin wallet: $BTC_WALLET_NAME"
-    CREATE_WALLET_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"createwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    # Ensure wallet exists and loaded
+    if ! ensure_bitcoin_wallet "$BTC_WALLET_NAME"; then
+        show_error "Gagal setup Bitcoin wallet"
+        return 1
+    fi
     
-    # Load wallet
-    LOAD_WALLET_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    # Get new address
+    # Get address info
     BTC_ADDRESS_RESPONSE=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     BTC_ADDRESS=$(echo $BTC_ADDRESS_RESPONSE | jq -r '.result')
     
@@ -190,6 +232,8 @@ generate_bitcoin_wallet() {
         show_error "Failed to generate Bitcoin address"
     fi
 }
+
+
 
 # Fungsi untuk generate EVM wallet
 generate_evm_wallet() {
@@ -230,11 +274,26 @@ generate_evm_wallet() {
 backup_wallets() {
     show_progress "Creating wallet backup..."
     
-    # Create backup archive
-    BACKUP_FILE="$BACKUP_DIR/wallet_backup_$TIMESTAMP.tar.gz"
-    tar -czf "$BACKUP_FILE" -C "$WALLET_DIR" .
+    # Create backup directory structure
+    mkdir -p "$BACKUP_DIR/bitcoin"
+    mkdir -p "$BACKUP_DIR/evm"
     
-    # Encrypt backup
+    # Backup Bitcoin wallet with proper checks
+    if [ -n "$BTC_WALLET_NAME" ]; then
+        if backup_bitcoin_wallet "$BTC_WALLET_NAME"; then
+            show_progress "Bitcoin wallet backup selesai"
+        else
+            show_error "Gagal backup Bitcoin wallet"
+        fi
+    fi
+    
+    # Backup EVM wallet dan info files
+    if [ -d "$WALLET_DIR" ]; then
+        tar -czf "$BACKUP_DIR/evm/evm_backup_${TIMESTAMP}.tar.gz" -C "$WALLET_DIR" .
+        show_progress "EVM wallet backup selesai"
+    fi
+    
+    # Encrypt backups
     read -s -p "Enter password for backup encryption: " BACKUP_PASSWORD
     echo
     read -s -p "Confirm backup password: " BACKUP_PASSWORD_CONFIRM
@@ -246,16 +305,20 @@ backup_wallets() {
         return
     fi
     
-    gpg --batch --yes --passphrase "$BACKUP_PASSWORD" -c "$BACKUP_FILE"
-    rm "$BACKUP_FILE"  # Remove unencrypted backup
+    # Encrypt all backup files
+    find "$BACKUP_DIR" -type f ! -name "*.gpg" ! -name "backup_info.txt" -exec bash -c '
+        gpg --batch --yes --passphrase "$0" -c "{}"
+        rm "{}"  # Remove unencrypted file after encryption
+    ' "$BACKUP_PASSWORD" \;
     
-    # Save backup info (tanpa password)
-    echo "Backup created: ${BACKUP_FILE}.gpg" > "$BACKUP_DIR/backup_info.txt"
-    echo "Timestamp: $TIMESTAMP" >> "$BACKUP_DIR/backup_info.txt"
-    echo "Wallets included:" >> "$BACKUP_DIR/backup_info.txt"
-    ls -1 "$WALLET_DIR" >> "$BACKUP_DIR/backup_info.txt"
+    # Save backup info
+    echo "Backup created at: $TIMESTAMP" > "$BACKUP_DIR/backup_info.txt"
+    echo -e "\nBitcoin wallet backup files:" >> "$BACKUP_DIR/backup_info.txt"
+    ls -1 "$BACKUP_DIR/bitcoin" 2>/dev/null >> "$BACKUP_DIR/backup_info.txt" || echo "No Bitcoin backups found" >> "$BACKUP_DIR/backup_info.txt"
+    echo -e "\nEVM wallet backup files:" >> "$BACKUP_DIR/backup_info.txt"
+    ls -1 "$BACKUP_DIR/evm" 2>/dev/null >> "$BACKUP_DIR/backup_info.txt" || echo "No EVM backups found" >> "$BACKUP_DIR/backup_info.txt"
     
-    show_progress "Backup created at: ${BACKUP_FILE}.gpg"
+    show_progress "All backups created and encrypted in $BACKUP_DIR"
     show_warning "Please store your backup password safely!"
 }
 
