@@ -270,6 +270,45 @@ generate_evm_wallet() {
     show_progress "EVM wallet generated and saved"
 }
 
+# Fungsi untuk backup wallet Bitcoin
+backup_bitcoin_wallet() {
+    local wallet_name=$1
+    show_progress "Backing up Bitcoin wallet: $wallet_name"
+    
+    # Pastikan Bitcoin node running
+    if ! curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port} > /dev/null; then
+        show_error "Bitcoin node tidak berjalan. Tidak dapat backup wallet."
+        return 1
+    fi
+    
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR/bitcoin/${wallet_name}"
+    
+    # Dump wallet
+    local dump_file="$BACKUP_DIR/bitcoin/${wallet_name}/wallet_dump_${TIMESTAMP}.txt"
+    local dump_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"dumpwallet\", \"params\": [\"$dump_file\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if echo "$dump_response" | jq -e '.error' > /dev/null; then
+        show_error "Gagal dump wallet: $(echo "$dump_response" | jq -r '.error.message')"
+        return 1
+    fi
+    
+    # Backup wallet data files
+    if [ -d "$WALLET_DATA_DIR/$wallet_name" ]; then
+        tar -czf "$BACKUP_DIR/bitcoin/${wallet_name}/wallet_data_${TIMESTAMP}.tar.gz" -C "$WALLET_DATA_DIR" "$wallet_name"
+        show_progress "Wallet data files backed up successfully"
+    else
+        show_warning "Wallet data directory tidak ditemukan: $WALLET_DATA_DIR/$wallet_name"
+    fi
+    
+    # Get and save current wallet info
+    local wallet_info=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    echo "$wallet_info" > "$BACKUP_DIR/bitcoin/${wallet_name}/wallet_info_${TIMESTAMP}.json"
+    
+    show_progress "Bitcoin wallet backup completed"
+    return 0
+}
+
 # Fungsi untuk backup wallet
 backup_wallets() {
     show_progress "Creating wallet backup..."
