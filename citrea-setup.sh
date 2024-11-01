@@ -126,27 +126,12 @@ while true; do
     fi
 done
 
-# Wallet setup with validation
-while true; do
-    print_color "yellow" "\nDo you want to create a new wallet or import existing one? (new/import)"
-    read -r WALLET_CHOICE
-    case "$WALLET_CHOICE" in
-        new)
-            print_color "blue" "\nCreating new wallet..."
-            ./citrea wallet new
-            break
-            ;;
-        import)
-            print_color "yellow" "\nEnter your wallet recovery phrase:"
-            read -r RECOVERY_PHRASE
-            echo "$RECOVERY_PHRASE" | ./citrea wallet import
-            break
-            ;;
-        *)
-            print_color "red" "Invalid choice. Please enter 'new' or 'import'"
-            ;;
-    esac
-done
+# Display manual wallet setup instructions
+print_color "yellow" "\nPlease set up your wallet using one of these commands after the installation:"
+print_color "blue" "1. To create a new wallet:"
+print_color "blue" "   ./citrea --genesis-paths genesis.json"
+print_color "blue" "2. To import an existing wallet:"
+print_color "blue" "   ./citrea --genesis-paths genesis.json --recovery-phrase 'your recovery phrase'"
 
 # Create systemd service with proper permissions
 print_color "blue" "\nCreating systemd service..."
@@ -158,7 +143,7 @@ Wants=network-online.target
 
 [Service]
 User=$USER
-ExecStart=$HOME/citrea/citrea node start --name $NODE_NAME
+ExecStart=$HOME/citrea/citrea --genesis-paths genesis.json --name $NODE_NAME
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -192,6 +177,7 @@ EOL
 print_color "green" "\n=== Installation Complete ==="
 print_color "yellow" "Your Citrea node has been installed and started!"
 print_color "yellow" "Node information saved to: $NODE_INFO"
+print_color "yellow" "\nIMPORTANT: Please set up your wallet using the commands shown above."
 print_color "yellow" "\nUseful commands:"
 print_color "blue" "Check node status: systemctl status citread"
 print_color "blue" "View logs: journalctl -u citread -f"
