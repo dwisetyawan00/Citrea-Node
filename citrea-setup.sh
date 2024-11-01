@@ -11,16 +11,42 @@ WALLET_DIR="$HOME/.citrea/wallets"
 BACKUP_DIR="$HOME/.citrea/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-# Fungsi untuk menampilkan logo (existing)
+# Fungsi untuk menampilkan logo
 show_logo() {
     curl -s https://raw.githubusercontent.com/dwisetyawan00/dwisetyawan00.github.io/main/logo.sh | bash
     sleep 2
 }
 
-# Fungsi existing untuk progress/error/warning
+# Fungsi untuk menampilkan progress/error/warning
 show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
+
+# Fungsi untuk memeriksa dan install dependensi dasar
+check_dependencies() {
+    show_progress "Memeriksa dependensi dasar..."
+    for pkg in curl wget jq; do
+        if ! command -v $pkg &> /dev/null; then
+            show_warning "$pkg tidak ditemukan. Menginstall $pkg..."
+            sudo apt update && sudo apt install -y $pkg
+        fi
+    done
+}
+
+# Fungsi untuk instalasi Docker
+install_docker() {
+    show_progress "Memeriksa Docker..."
+    if ! command -v docker &> /dev/null; then
+        show_progress "Menginstall Docker..."
+        sudo apt update
+        sudo apt install -y docker.io docker-compose
+        sudo systemctl enable --now docker
+        sudo usermod -aG docker $USER
+        show_warning "Docker berhasil diinstall. Anda perlu logout dan login kembali."
+        show_warning "Jalankan script ini kembali setelah login ulang."
+        exit 0
+    fi
+}
 
 # Fungsi untuk setup direktori wallet
 setup_wallet_directories() {
@@ -40,6 +66,77 @@ validate_wallet_name() {
     return 0
 }
 
+# Fungsi untuk menjalankan Bitcoin node
+run_bitcoin_node() {
+    show_progress "Menjalankan Bitcoin Testnet4 Node..."
+    
+    # Hentikan container yang sudah ada
+    docker stop bitcoin-testnet4 2>/dev/null
+    docker rm bitcoin-testnet4 2>/dev/null
+    
+    # Jalankan container baru
+    docker run -d \
+    --name bitcoin-testnet4 \
+    --restart unless-stopped \
+    -p ${rpc_port}:${rpc_port} \
+    -p $((rpc_port + 1)):$((rpc_port + 1)) \
+    bitcoin/bitcoin:28.0rc1 \
+    -printtoconsole \
+    -testnet4=1 \
+    -rest \
+    -rpcbind=0.0.0.0 \
+    -rpcallowip=0.0.0.0/0 \
+    -rpcport=${rpc_port} \
+    -rpcuser=citrea \
+    -rpcpassword=citrea \
+    -server \
+    -txindex=1
+}
+
+# Fungsi untuk verify Bitcoin node
+verify_bitcoin_node() {
+    show_progress "Verifying Bitcoin node..."
+    local max_attempts=30
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        if curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port} > /dev/null; then
+            show_progress "Bitcoin node is running"
+            return 0
+        fi
+        
+        show_warning "Waiting for Bitcoin node to start (attempt $attempt/$max_attempts)..."
+        sleep 10
+        attempt=$((attempt + 1))
+    done
+    
+    show_error "Bitcoin node failed to start after $max_attempts attempts"
+    return 1
+}
+
+# Fungsi untuk setup Citrea
+setup_citrea() {
+    show_progress "Setting up Citrea..."
+    
+    # Buat dan masuk ke direktori
+    mkdir -p ${node_name} && cd ${node_name}
+    
+    # Download binary dan file pendukung
+    show_progress "Downloading files..."
+    wget -q https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
+    curl -s https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml -o rollup_config.toml
+    curl -s https://static.testnet.citrea.xyz/genesis.tar.gz -o genesis.tar.gz
+    
+    # Extract genesis dan set permission
+    tar xf genesis.tar.gz
+    chmod +x ./citrea-v0.5.4-linux-amd64
+    
+    # Update config
+    sed -i "s/rpc_user = .*/rpc_user = \"citrea\"/" rollup_config.toml
+    sed -i "s/rpc_password = .*/rpc_password = \"citrea\"/" rollup_config.toml
+    sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
+}
+
 # Fungsi untuk generate Bitcoin testnet4 wallet
 generate_bitcoin_wallet() {
     show_progress "Setup Bitcoin testnet4 wallet..."
@@ -54,20 +151,30 @@ generate_bitcoin_wallet() {
         fi
     done
     
-    # Generate wallet menggunakan bitcoin-cli dalam container
+    # Create wallet using curl
     show_progress "Generating Bitcoin wallet: $BTC_WALLET_NAME"
-    docker exec bitcoin-testnet4 bitcoin-cli -testnet4 createwallet "$BTC_WALLET_NAME"
+    CREATE_WALLET_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"createwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
-    # Generate new address
-    BTC_ADDRESS=$(docker exec bitcoin-testnet4 bitcoin-cli -testnet4 -rpcwallet="$BTC_WALLET_NAME" getnewaddress)
-    BTC_PRIVKEY=$(docker exec bitcoin-testnet4 bitcoin-cli -testnet4 -rpcwallet="$BTC_WALLET_NAME" dumpprivkey "$BTC_ADDRESS")
+    # Verify wallet is loaded
+    WALLET_LIST=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    # Get new address
+    BTC_ADDRESS_RESPONSE=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    BTC_ADDRESS=$(echo $BTC_ADDRESS_RESPONSE | jq -r '.result')
+    
+    # Get wallet info
+    WALLET_INFO=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    # Get descriptors (including private keys)
+    DESCRIPTORS=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listdescriptors", "params": [true]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
     # Save wallet info
     echo "Bitcoin Testnet4 Wallet" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Address: $BTC_ADDRESS" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "Private Key: $BTC_PRIVKEY" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Wallet Info: $WALLET_INFO" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Descriptors: $DESCRIPTORS" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     
     show_progress "Bitcoin wallet generated and saved"
     show_warning "Please fund this address with testnet4 BTC: $BTC_ADDRESS"
@@ -87,27 +194,23 @@ generate_evm_wallet() {
         fi
     done
     
-    # Install ethereum-keygen jika belum ada
-    if ! command -v ethereum-keygen &> /dev/null; then
-        show_progress "Installing ethereum-keygen..."
-        npm install -g ethereum-keygen
-    fi
-    
-    # Generate EVM wallet
+    # Generate EVM wallet (menggunakan openssl untuk generate private key)
     show_progress "Generating EVM wallet: $EVM_WALLET_NAME"
-    EVM_KEYS=$(ethereum-keygen)
-    EVM_ADDRESS=$(echo "$EVM_KEYS" | grep "Address:" | cut -d' ' -f2)
-    EVM_PRIVKEY=$(echo "$EVM_KEYS" | grep "Private key:" | cut -d' ' -f3)
+    EVM_PRIVKEY=$(openssl rand -hex 32)
     
     # Save wallet info
     echo "EVM Wallet" > "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
     echo "Wallet Name: $EVM_WALLET_NAME" >> "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
-    echo "Address: $EVM_ADDRESS" >> "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
     echo "Private Key: $EVM_PRIVKEY" >> "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
     echo "Created: $(date)" >> "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
     
     # Update rollup config dengan EVM private key
-    sed -i "s/private_key = .*/private_key = \"$EVM_PRIVKEY\"/" rollup_config.toml
+    if [ -f "rollup_config.toml" ]; then
+        sed -i "s/private_key = .*/private_key = \"$EVM_PRIVKEY\"/" rollup_config.toml
+        show_progress "EVM private key updated in rollup config"
+    else
+        show_warning "rollup_config.toml not found, private key not updated"
+    fi
     
     show_progress "EVM wallet generated and saved"
 }
@@ -145,6 +248,16 @@ backup_wallets() {
     show_warning "Please store your backup password safely!"
 }
 
+# Fungsi untuk menampilkan info node
+show_node_info() {
+    echo -e "\n=== Informasi Node ==="
+    echo "Nama Node: ${node_name}"
+    echo "Bitcoin RPC: http://0.0.0.0:${rpc_port}"
+    echo "Citrea API: http://0.0.0.0:${citrea_port}"
+    echo -e "\nUntuk cek sync status:"
+    echo "curl -X POST --header \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"citrea_syncStatus\",\"params\":[], \"id\":31}' http://0.0.0.0:${citrea_port}"
+}
+
 # Fungsi untuk menampilkan wallet info
 show_wallet_info() {
     echo -e "\n=== Wallet Information ==="
@@ -155,14 +268,15 @@ show_wallet_info() {
     
     if [ -f "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt" ]; then
         echo -e "\nEVM Wallet Name: $EVM_WALLET_NAME"
-        grep "Address:" "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
+        # Tidak menampilkan private key untuk keamanan
+        echo "Private key tersimpan di: $WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
     fi
     
     echo -e "\nWallet files location: $WALLET_DIR"
     echo "Backup location: $BACKUP_DIR"
 }
 
-# Modifikasi fungsi get_manual_config yang existing
+# Fungsi untuk input manual
 get_manual_config() {
     echo "=== Konfigurasi Node ==="
     read -p "Nama Node (default: citrea-node): " node_name
@@ -174,12 +288,11 @@ get_manual_config() {
     read -p "Citrea Port (default: 8080): " citrea_port
     citrea_port=${citrea_port:-8080}
     
-    # Tambahan opsi untuk wallet
     read -p "Generate new wallets? (Y/n): " gen_wallets
     gen_wallets=${gen_wallets:-Y}
 }
 
-# Modifikasi main script
+# Main script
 main() {
     clear
     show_logo
@@ -208,19 +321,33 @@ main() {
             ;;
     esac
 
-    # Proses instalasi
+    # 1. Install dependencies first
     check_dependencies
     install_docker
+    
+    # 2. Setup directories
     setup_wallet_directories
+    
+    # 3. Run Bitcoin node
     run_bitcoin_node
     
+    # 4. Verify Bitcoin node is running
+    if ! verify_bitcoin_node; then
+        show_error "Bitcoin node verification failed. Please check logs and try again."
+        exit 1
+    fi
+    
+    # 5. Setup Citrea
+    setup_citrea
+    
+    # 6. Generate wallets after everything is running
     if [[ "${gen_wallets,,}" == "y" ]]; then
         generate_bitcoin_wallet
         generate_evm_wallet
         backup_wallets
     fi
     
-    setup_citrea
+    # 7. Show final information
     show_node_info
     show_wallet_info
 
