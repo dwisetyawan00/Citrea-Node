@@ -12,32 +12,16 @@ show_logo() {
     sleep 2
 }
 
-# Fungsi untuk menampilkan progress
-show_progress() {
-    echo -e "${GREEN}[+] $1${NC}"
-}
+# Fungsi untuk menampilkan progress/error/warning
+show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
+show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
+show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
-# Fungsi untuk menampilkan error
-show_error() {
-    echo -e "${RED}[-] Error: $1${NC}"
-}
-
-# Fungsi untuk menampilkan warning
-show_warning() {
-    echo -e "${YELLOW}[!] Warning: $1${NC}"
-}
-
-# Fungsi untuk input manual konfigurasi
+# Fungsi untuk input manual (hanya yang penting)
 get_manual_config() {
-    echo "=== Konfigurasi Manual ==="
+    echo "=== Konfigurasi Node ==="
     read -p "Nama Node (default: citrea-node): " node_name
     node_name=${node_name:-citrea-node}
-    
-    read -p "RPC User (default: citrea): " rpc_user
-    rpc_user=${rpc_user:-citrea}
-    
-    read -p "RPC Password (default: citrea): " rpc_password
-    rpc_password=${rpc_password:-citrea}
     
     read -p "RPC Port (default: 18443): " rpc_port
     rpc_port=${rpc_port:-18443}
@@ -46,38 +30,28 @@ get_manual_config() {
     citrea_port=${citrea_port:-8080}
 }
 
-# Fungsi untuk memeriksa dependensi
+# Fungsi untuk memeriksa dan install dependensi dasar
 check_dependencies() {
-    show_progress "Memeriksa dependensi..."
-    
-    # Install curl jika belum ada
-    if ! command -v curl &> /dev/null; then
-        show_warning "curl tidak ditemukan. Menginstall curl..."
-        sudo apt update
-        sudo apt install -y curl
-    fi
-
-    # Install wget jika belum ada
-    if ! command -v wget &> /dev/null; then
-        show_warning "wget tidak ditemukan. Menginstall wget..."
-        sudo apt update
-        sudo apt install -y wget
-    fi
+    show_progress "Memeriksa dependensi dasar..."
+    for pkg in curl wget; do
+        if ! command -v $pkg &> /dev/null; then
+            show_warning "$pkg tidak ditemukan. Menginstall $pkg..."
+            sudo apt update && sudo apt install -y $pkg
+        fi
+    done
 }
 
 # Fungsi untuk instalasi Docker
 install_docker() {
-    show_progress "Memeriksa instalasi Docker..."
-    
+    show_progress "Memeriksa Docker..."
     if ! command -v docker &> /dev/null; then
         show_progress "Menginstall Docker..."
         sudo apt update
         sudo apt install -y docker.io docker-compose
-        sudo systemctl start docker
-        sudo systemctl enable docker
+        sudo systemctl enable --now docker
         sudo usermod -aG docker $USER
         show_warning "Docker berhasil diinstall. Anda perlu logout dan login kembali."
-        show_warning "Script akan keluar. Jalankan kembali setelah login ulang."
+        show_warning "Jalankan script ini kembali setelah login ulang."
         exit 0
     fi
 }
@@ -86,10 +60,11 @@ install_docker() {
 run_bitcoin_node() {
     show_progress "Menjalankan Bitcoin Testnet4 Node..."
     
-    # Hentikan container yang sudah ada jika ada
+    # Hentikan container yang sudah ada
     docker stop bitcoin-testnet4 2>/dev/null
     docker rm bitcoin-testnet4 2>/dev/null
     
+    # Jalankan container baru
     docker run -d \
     --name bitcoin-testnet4 \
     --restart unless-stopped \
@@ -102,84 +77,65 @@ run_bitcoin_node() {
     -rpcbind=0.0.0.0 \
     -rpcallowip=0.0.0.0/0 \
     -rpcport=${rpc_port} \
-    -rpcuser=${rpc_user} \
-    -rpcpassword=${rpc_password} \
+    -rpcuser=citrea \
+    -rpcpassword=citrea \
     -server \
     -txindex=1
-    
-    # Tunggu node startup
-    show_progress "Menunggu Bitcoin node startup..."
-    sleep 10
-    
+
     # Verifikasi node
+    sleep 10
     show_progress "Verifikasi Bitcoin node..."
-    if curl --silent --user ${rpc_user}:${rpc_password} --data-binary '{"jsonrpc": "1.0", "id": "curltest", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port} > /dev/null; then
+    if curl --silent --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id": "curltest", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port} > /dev/null; then
         show_progress "Bitcoin node berhasil dijalankan"
     else
         show_error "Bitcoin node gagal dijalankan"
+        docker logs bitcoin-testnet4
         exit 1
     fi
 }
 
-# Fungsi untuk setup dan menjalankan Citrea
+# Fungsi untuk setup Citrea
 setup_citrea() {
     show_progress "Setting up Citrea..."
     
-    # Buat direktori
+    # Buat dan masuk ke direktori
     mkdir -p ${node_name} && cd ${node_name}
     
-    # Download binary
-    show_progress "Downloading Citrea binary..."
-    wget https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
+    # Download binary dan file pendukung
+    show_progress "Downloading files..."
+    wget -q https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64
+    curl -s https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml -o rollup_config.toml
+    curl -s https://static.testnet.citrea.xyz/genesis.tar.gz -o genesis.tar.gz
     
-    # Download config
-    show_progress "Downloading config files..."
-    curl https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml --output rollup_config.toml
+    # Extract genesis dan set permission
+    tar xf genesis.tar.gz
+    chmod +x ./citrea-v0.5.4-linux-amd64
     
-    # Download & extract genesis
-    show_progress "Downloading dan extracting genesis files..."
-    curl https://static.testnet.citrea.xyz/genesis.tar.gz --output genesis.tar.gz
-    tar -xzvf genesis.tar.gz
-    
-    # Set permission
-    chmod u+x ./citrea-v0.5.4-linux-amd64
-    
-    # Backup config file
-    cp rollup_config.toml rollup_config.toml.backup
-    
-    # Update config dengan nilai-nilai custom
-    sed -i "s/rpc_user = .*/rpc_user = \"${rpc_user}\"/" rollup_config.toml
-    sed -i "s/rpc_password = .*/rpc_password = \"${rpc_password}\"/" rollup_config.toml
+    # Update config
+    sed -i "s/rpc_user = .*/rpc_user = \"citrea\"/" rollup_config.toml
+    sed -i "s/rpc_password = .*/rpc_password = \"citrea\"/" rollup_config.toml
     sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
     
     show_progress "Menjalankan Citrea node..."
     ./citrea-v0.5.4-linux-amd64 --da-layer bitcoin --rollup-config-path ./rollup_config.toml --genesis-paths ./genesis &
     
-    # Tunggu node startup
+    # Verifikasi node
     sleep 10
-    
-    # Verifikasi Citrea node
-    show_progress "Verifikasi Citrea node..."
     if curl -s -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:${citrea_port} > /dev/null; then
         show_progress "Citrea node berhasil dijalankan"
     else
-        show_error "Citrea node gagal dijalankan"
+        show_error "Citrea node gagal dijalankan. Cek log untuk detail"
         exit 1
     fi
 }
 
 # Fungsi untuk menampilkan informasi node
 show_node_info() {
-    echo ""
-    echo "=== Informasi Node ==="
+    echo -e "\n=== Informasi Node ==="
     echo "Nama Node: ${node_name}"
     echo "Bitcoin RPC: http://0.0.0.0:${rpc_port}"
     echo "Citrea API: http://0.0.0.0:${citrea_port}"
-    echo ""
-    echo "Untuk cek status Bitcoin node:"
-    echo "curl --user ${rpc_user}:${rpc_password} --data-binary '{\"jsonrpc\": \"1.0\", \"id\": \"curltest\", \"method\": \"getblockcount\", \"params\": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}"
-    echo ""
-    echo "Untuk cek status Citrea sync:"
+    echo -e "\nUntuk cek sync status:"
     echo "curl -X POST --header \"Content-Type: application/json\" --data '{\"jsonrpc\":\"2.0\",\"method\":\"citrea_syncStatus\",\"params\":[], \"id\":31}' http://0.0.0.0:${citrea_port}"
 }
 
@@ -188,19 +144,16 @@ clear
 show_logo
 
 echo "=================================="
-echo "   Citrea Complete Installation   "
+echo "   Citrea Node Installation       "
 echo "=================================="
-echo "Pilih konfigurasi:"
-echo "1. Konfigurasi Default (Recommended)"
+echo "1. Konfigurasi Default"
 echo "2. Konfigurasi Manual"
 echo "=================================="
-read -p "Pilihan Anda (1/2): " config_choice
+read -p "Pilihan (1/2): " config_choice
 
 case $config_choice in
     1)
         node_name="citrea-node"
-        rpc_user="citrea"
-        rpc_password="citrea"
         rpc_port="18443"
         citrea_port="8080"
         ;;
@@ -213,7 +166,7 @@ case $config_choice in
         ;;
 esac
 
-# Mulai instalasi
+# Proses instalasi
 check_dependencies
 install_docker
 run_bitcoin_node
@@ -221,3 +174,5 @@ setup_citrea
 show_node_info
 
 show_progress "Instalasi selesai!"
+show_warning "Penting: Node memerlukan waktu untuk sinkronisasi penuh"
+show_warning "Gunakan perintah cek status di atas untuk memantau progress"
