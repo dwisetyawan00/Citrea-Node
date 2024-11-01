@@ -102,7 +102,7 @@ download_executable() {
 }
 
 # Download Citrea executable
-EXECUTABLE_URL="chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
+EXECUTABLE_URL="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
 OUTPUT_FILE="$HOME/citrea/citrea"
 
 print_color "blue" "\nDownloading Citrea executable..."
