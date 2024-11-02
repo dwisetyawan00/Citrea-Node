@@ -50,7 +50,7 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/check-node
 ```
 ### Untuk melihat node sync setiap 10 dtk
 ```bash
-./check_nodes.sh --monitor
+./check-node.sh --monitor
 ```
 # ⚙️ Service Management
 ## Monitoring Status:
