@@ -18,13 +18,6 @@
 | OS | Ubuntu 20.04 | Ubuntu 22.04 |
 | Ports | 30333, 9933, 9944 | 30333, 9933, 9944 |
 
-# 🌐 Network Bandwidth
-
-| Usage | Per Day | Per Month |
-|-------|---------|-----------|
-| Download | ~1-2 GB | ~30-60 GB |
-| Upload | ~2-4 GB | ~60-120 GB |
-
 # Install Docker
 ```bash
 sudo apt update
@@ -73,8 +66,33 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-set
   - Masukan nama node
   - Enter biarkan default
 
-# 👛 Generate Wallet
+## *SEBELUM CREATE WALLET PASTIKAN BLOCK SUDAH TERCAPAI*
+
+# 👛 Auto Generate Wallet
 ### Create new wallet
+```bash
+wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/create-wallet.sh && chmod +x create-wallet.sh && sudo ./create-wallet.sh
+```
+
+# 📝 Check Logs
+```bash
+curl -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:8080
+```
+```bash
+tail -f citrea.log
+```
+# ⚙️ Service Management
+## Monitoring Status:
+
+- Cek sync Citrea: 
+```bash
+curl -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:8080
+```
+- Cek Bitcoin node:
+```bash
+docker logs -f bitcoin-testnet4
+```
+## Manual Create & Backup Wallet
 ```bash
 curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "createwallet", "params": ["nama_wallet_baru"]}' -H 'content-type: text/plain;' http://0.0.0.0:18443
 ```
@@ -104,22 +122,6 @@ curl --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "me
 - Ganti "ADDRESS_YANG_DIDAPAT" dengan address yang didapat dari command getnewaddress
 - Private key akan muncul dalam format tprv dari hasil listdescriptors
 - Simpan private key (tprv...) dengan aman karena ini adalah master key untuk wallet Anda
-
-# 📝 Check Logs
-```bash
-tail -f citrea.log
-```
-# ⚙️ Service Management
-## Monitoring Status:
-
-- Cek sync Citrea: 
-```bash
-curl -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:8080
-```
-- Cek Bitcoin node:
-```bash
-docker logs -f bitcoin-testnet4
-```
 
 ## Troubleshooting:
 
