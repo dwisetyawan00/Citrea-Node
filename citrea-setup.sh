@@ -23,6 +23,14 @@ show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
+derive_bitcoin_key() {
+    local evm_privkey=$1
+    # Convert EVM private key to a format suitable for Bitcoin
+    # Note: Using SHA256 to derive Bitcoin key from EVM key for deterministic generation
+    local btc_privkey=$(echo -n "$evm_privkey" | sha256sum | cut -d' ' -f1)
+    echo "$btc_privkey"
+}
+
 # Fungsi untuk memeriksa dan install dependensi dasar
 check_dependencies() {
     show_progress "Memeriksa dependensi dasar..."
@@ -182,6 +190,7 @@ setup_citrea() {
 
 # Fungsi untuk generate Bitcoin testnet4 wallet
 generate_bitcoin_wallet() {
+    local evm_privkey=$1
     show_progress "Setup Bitcoin testnet4 wallet..."
     
     # Input nama wallet
@@ -194,42 +203,35 @@ generate_bitcoin_wallet() {
         fi
     done
     
-    # Ensure wallet exists and loaded
-    if ! ensure_bitcoin_wallet "$BTC_WALLET_NAME"; then
-        show_error "Gagal setup Bitcoin wallet"
+    # Derive Bitcoin private key from EVM private key
+    local btc_privkey=$(derive_bitcoin_key "$evm_privkey")
+    
+    # Import the private key to Bitcoin wallet
+    local import_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"importprivkey\", \"params\": [\"$btc_privkey\", \"citrea_derived\", false]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if echo "$import_response" | jq -e '.error' > /dev/null; then
+        show_error "Failed to import Bitcoin private key: $(echo "$import_response" | jq -r '.error.message')"
         return 1
     fi
     
-    # Get address info
-    BTC_ADDRESS_RESPONSE=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    BTC_ADDRESS=$(echo $BTC_ADDRESS_RESPONSE | jq -r '.result')
+    # Get new address for the imported key
+    local address_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": ["citrea_derived"]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    local btc_address=$(echo "$address_response" | jq -r '.result')
     
-    if [ -n "$BTC_ADDRESS" ]; then
-        # Get private key
-        PRIVKEY_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"dumpprivkey\", \"params\": [\"$BTC_ADDRESS\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-        BTC_PRIVKEY=$(echo $PRIVKEY_RESPONSE | jq -r '.result')
-        
-        # Get address info
-        ADDR_INFO_RESPONSE=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"getaddressinfo\", \"params\": [\"$BTC_ADDRESS\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-        
-        # Get wallet info
-        WALLET_INFO=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-        
+    if [ -n "$btc_address" ]; then
         # Save wallet info
-        echo "Bitcoin Testnet4 Wallet" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Bitcoin Testnet4 Wallet (Derived from EVM)" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
         echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Address: $BTC_ADDRESS" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Private Key: $BTC_PRIVKEY" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Address: $btc_address" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Private Key: $btc_privkey" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Derived from EVM Key: $evm_privkey" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
         echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo -e "\nWallet Info:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "$WALLET_INFO" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo -e "\nAddress Info:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "$ADDR_INFO_RESPONSE" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
         
         show_progress "Bitcoin wallet generated and saved"
-        show_warning "Please fund this address with testnet4 BTC: $BTC_ADDRESS"
+        show_warning "Please fund this address with testnet4 BTC: $btc_address"
     else
         show_error "Failed to generate Bitcoin address"
+        return 1
     fi
 }
 
@@ -249,7 +251,7 @@ generate_evm_wallet() {
         fi
     done
     
-    # Generate EVM wallet (menggunakan openssl untuk generate private key)
+    # Generate EVM wallet
     show_progress "Generating EVM wallet: $EVM_WALLET_NAME"
     EVM_PRIVKEY=$(openssl rand -hex 32)
     
@@ -268,6 +270,9 @@ generate_evm_wallet() {
     fi
     
     show_progress "EVM wallet generated and saved"
+    
+    # Return the private key for Bitcoin wallet generation
+    echo "$EVM_PRIVKEY"
 }
 
 # Fungsi untuk backup wallet Bitcoin
@@ -500,10 +505,12 @@ main() {
     
     # 6. Generate wallets after everything is running
     if [[ "${gen_wallets,,}" == "y" ]]; then
-        generate_bitcoin_wallet
-        generate_evm_wallet
-        backup_wallets
-    fi
+    # Generate EVM wallet first and get the private key
+    EVM_PRIVKEY=$(generate_evm_wallet)
+    # Use the EVM private key to generate Bitcoin wallet
+    generate_bitcoin_wallet "$EVM_PRIVKEY"
+    backup_wallets
+fi
     
     # 7. Show final information
     show_node_info
