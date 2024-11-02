@@ -189,7 +189,6 @@ setup_citrea() {
 }
 
 # Fungsi untuk generate Bitcoin testnet4 wallet
-# Fungsi untuk generate Bitcoin testnet4 wallet
 generate_bitcoin_wallet() {
     local evm_privkey=$1
     show_progress "Setup Bitcoin testnet4 wallet..."
@@ -263,8 +262,6 @@ generate_bitcoin_wallet() {
     return 0
 }
 
-
-
 # Fungsi untuk generate EVM wallet
 generate_evm_wallet() {
     show_progress "Setup EVM wallet..."
@@ -303,10 +300,74 @@ generate_evm_wallet() {
     echo "$EVM_PRIVKEY"
 }
 
+# Fungsi untuk memverifikasi koneksi Bitcoin RPC
+verify_bitcoin_connection() {
+    local rpc_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnetworkinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if [[ $rpc_response == *"error"* ]] || [ -z "$rpc_response" ]; then
+        show_error "Tidak dapat terhubung ke Bitcoin daemon"
+        return 1
+    fi
+    return 0
+}
+
+# Fungsi untuk verifikasi wallet
+verify_wallet_exists() {
+    local wallet_name=$1
+    local wallet_list=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if [[ $wallet_list != *"$wallet_name"* ]]; then
+        show_error "Wallet '$wallet_name' tidak ditemukan"
+        return 1
+    fi
+    return 0
+}
+
+# Fungsi untuk memverifikasi backup
+verify_backup_integrity() {
+    local backup_dir=$1
+    local timestamp=$2
+    
+    # Verifikasi file backup
+    local required_files=(
+        "wallet_info_${timestamp}.json"
+        "addresses_${timestamp}.json"
+        "descriptors_${timestamp}.json"
+        "transactions_${timestamp}.json"
+    )
+    
+    for file in "${required_files[@]}"; do
+        if [ ! -f "$backup_dir/$file" ]; then
+            show_error "File backup tidak lengkap: $file tidak ditemukan"
+            return 1
+        fi
+        
+        # Verifikasi file tidak kosong
+        if [ ! -s "$backup_dir/$file" ]; then
+            show_error "File backup kosong: $file"
+            return 1
+        }
+        
+        # Verifikasi format JSON
+        if ! jq empty "$backup_dir/$file" 2>/dev/null; then
+            show_error "File backup rusak: $file bukan format JSON yang valid"
+            return 1
+        fi
+    done
+    
+    return 0
+}
+
 # Fungsi untuk backup wallet Bitcoin
 backup_bitcoin_wallet() {
     local wallet_name=$1
     show_progress "Starting Bitcoin wallet backup process..."
+    
+    # Verifikasi koneksi Bitcoin daemon
+    if ! verify_bitcoin_connection; then
+        show_error "Gagal terkoneksi ke Bitcoin daemon. Pastikan bitcoind berjalan"
+        return 1
+    fi
     
     # Debug info
     show_progress "Wallet name: $wallet_name"
@@ -319,74 +380,168 @@ backup_bitcoin_wallet() {
         return 1
     fi
     
-    # Verifikasi node Bitcoin
-    show_progress "Verifying Bitcoin node..."
-    local node_check=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    if [ -z "$node_check" ] || echo "$node_check" | jq -e '.error' > /dev/null; then
-        show_error "Bitcoin node tidak merespon atau error"
-        show_error "Response: $node_check"
-        return 1
-    fi
-    
-    # Verifikasi wallet loaded
-    show_progress "Verifying wallet is loaded..."
-    local wallet_list=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    if ! echo "$wallet_list" | grep -q "$wallet_name"; then
-        show_warning "Wallet $wallet_name tidak terdeteksi, mencoba load..."
+    # Verifikasi wallet exists dan loaded
+    if ! verify_wallet_exists "$wallet_name"; then
+        show_warning "Mencoba load wallet..."
         curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$wallet_name\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}
+        sleep 2
+        
+        if ! verify_wallet_exists "$wallet_name"; then
+            show_error "Wallet tetap tidak dapat di-load"
+            return 1
+        fi
     fi
     
     # Create backup directory
-    show_progress "Creating backup directory..."
-    mkdir -p "$BACKUP_DIR/bitcoin/${wallet_name}"
+    local wallet_backup_dir="$BACKUP_DIR/bitcoin/${wallet_name}"
+    mkdir -p "$wallet_backup_dir"
     
-    # Dump wallet
-    show_progress "Dumping wallet..."
-    local dump_file="$BACKUP_DIR/bitcoin/${wallet_name}/wallet_dump_${TIMESTAMP}.txt"
-    local dump_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"dumpwallet\", \"params\": [\"$dump_file\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    # Verifikasi wallet tidak terkunci
+    local wallet_info=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    if [[ $wallet_info == *"unlocked_until"* ]]; then
+        show_warning "Wallet terkunci. Mencoba unlock..."
+        # Prompt untuk password wallet jika diperlukan
+        read -s -p "Enter wallet passphrase: " WALLET_PASS
+        echo
+        curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"walletpassphrase\", \"params\": [\"$WALLET_PASS\", 30]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}
+    fi
     
-    if echo "$dump_response" | jq -e '.error' > /dev/null; then
-        show_error "Gagal dump wallet: $(echo "$dump_response" | jq -r '.error.message')"
-        show_error "Full response: $dump_response"
+    # Backup wallet info using getwalletinfo
+    show_progress "Backing up wallet information..."
+    echo "$wallet_info" > "$wallet_backup_dir/wallet_info_${TIMESTAMP}.json"
+    
+    # Backup addresses dan labels dengan error handling
+    show_progress "Backing up addresses and labels..."
+    local address_info=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listlabels", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    if [[ $address_info == *"error"* ]]; then
+        show_warning "Gagal mendapatkan labels, mencoba listaddressgroupings..."
+        address_info=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listaddressgroupings", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    fi
+    echo "$address_info" > "$wallet_backup_dir/addresses_${TIMESTAMP}.json"
+    
+    # Backup descriptors dengan verifikasi
+    show_progress "Backing up wallet descriptors..."
+    local descriptor_info=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listdescriptors", "params": [true]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    echo "$descriptor_info" > "$wallet_backup_dir/descriptors_${TIMESTAMP}.json"
+    
+    # Backup transaction history dengan pagination
+    show_progress "Backing up transaction history..."
+    local tx_history=""
+    local count=10000
+    local skip=0
+    local tx_batch
+    
+    while true; do
+        tx_batch=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"listtransactions\", \"params\": [\"*\", $count, $skip]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+        
+        if [[ $tx_batch == *"[]"* ]] || [[ $tx_batch == *"error"* ]]; then
+            break
+        fi
+        
+        if [ -z "$tx_history" ]; then
+            tx_history=$tx_batch
+        else
+            tx_history=$(jq -s '.[0] + .[1]' <(echo "$tx_history") <(echo "$tx_batch"))
+        fi
+        
+        skip=$((skip + count))
+    done
+    
+    echo "$tx_history" > "$wallet_backup_dir/transactions_${TIMESTAMP}.json"
+    
+    # Backup wallet file dengan multiple retries
+    show_progress "Backing up wallet data files..."
+    local wallet_data_locations=(
+        "$HOME/.bitcoin/testnet4/wallets/$wallet_name"
+        "$HOME/.bitcoin/wallets/$wallet_name"
+        "$HOME/.bitcoin/testnet4/$wallet_name"
+        "$WALLET_DATA_DIR/$wallet_name"
+    )
+    
+    local backup_success=0
+    local retry_count=0
+    local max_retries=3
+    
+    while [ $backup_success -eq 0 ] && [ $retry_count -lt $max_retries ]; do
+        for wallet_path in "${wallet_data_locations[@]}"; do
+            if [ -d "$wallet_path" ]; then
+                show_progress "Found wallet data at: $wallet_path"
+                # Stop Bitcoin wallet before copying
+                curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"unloadwallet\", \"params\": [\"$wallet_name\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}
+                sleep 3  # Increased sleep time
+                
+                # Create tar backup with verification
+                if tar -czf "$wallet_backup_dir/wallet_data_${TIMESTAMP}.tar.gz" -C "$(dirname "$wallet_path")" "$(basename "$wallet_path")"; then
+                    # Verify tar file
+                    if tar -tzf "$wallet_backup_dir/wallet_data_${TIMESTAMP}.tar.gz" >/dev/null 2>&1; then
+                        backup_success=1
+                    else
+                        show_warning "Backup file corrupt, retrying..."
+                        rm "$wallet_backup_dir/wallet_data_${TIMESTAMP}.tar.gz"
+                    fi
+                fi
+                
+                # Reload wallet
+                curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$wallet_name\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}
+                sleep 2
+                
+                if [ $backup_success -eq 1 ]; then
+                    break
+                fi
+            fi
+        done
+        
+        retry_count=$((retry_count + 1))
+        [ $backup_success -eq 0 ] && [ $retry_count -lt $max_retries ] && sleep 5
+    done
+    
+    if [ $backup_success -eq 0 ]; then
+        show_warning "Tidak dapat membackup file wallet setelah $max_retries percobaan"
+        show_warning "Hanya metadata wallet yang di-backup"
+    fi
+    
+    # Verifikasi integritas backup
+    if ! verify_backup_integrity "$wallet_backup_dir" "$TIMESTAMP"; then
+        show_error "Verifikasi backup gagal"
         return 1
     fi
     
-    # Backup wallet data files
-    show_progress "Backing up wallet data files..."
-    if [ -d "$WALLET_DATA_DIR/$wallet_name" ]; then
-        tar -czf "$BACKUP_DIR/bitcoin/${wallet_name}/wallet_data_${TIMESTAMP}.tar.gz" -C "$WALLET_DATA_DIR" "$wallet_name"
-        show_progress "Wallet data files backed up successfully"
-    else
-        show_warning "Wallet data directory tidak ditemukan: $WALLET_DATA_DIR/$wallet_name"
-        show_warning "Mencoba cari di lokasi alternatif..."
-        # Coba cari di lokasi lain
-        for dir in "$HOME/.bitcoin" "$HOME/.bitcoin/testnet4" "$HOME/.bitcoin/wallets"; do
-            if [ -d "$dir/$wallet_name" ]; then
-                show_progress "Wallet ditemukan di: $dir/$wallet_name"
-                tar -czf "$BACKUP_DIR/bitcoin/${wallet_name}/wallet_data_${TIMESTAMP}.tar.gz" -C "$dir" "$wallet_name"
-                show_progress "Wallet data files backed up from alternative location"
-                break
-            fi
-        done
-    fi
-    
-    # Get and save current wallet info
-    show_progress "Saving wallet info..."
-    local wallet_info=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getwalletinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    echo "$wallet_info" > "$BACKUP_DIR/bitcoin/${wallet_name}/wallet_info_${TIMESTAMP}.json"
+    # Create backup summary
+    show_progress "Creating backup summary..."
+    {
+        echo "Bitcoin Wallet Backup Summary"
+        echo "============================"
+        echo "Wallet Name: $wallet_name"
+        echo "Backup Time: $(date)"
+        echo "Backup Location: $wallet_backup_dir"
+        echo "Bitcoin Core Version: $(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnetworkinfo", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port} | jq -r '.result.version')"
+        echo
+        echo "Backup Contents:"
+        echo "1. Wallet Info (wallet_info_${TIMESTAMP}.json)"
+        echo "2. Address List (addresses_${TIMESTAMP}.json)"
+        echo "3. Wallet Descriptors (descriptors_${TIMESTAMP}.json)"
+        echo "4. Transaction History (transactions_${TIMESTAMP}.json)"
+        if [ $backup_success -eq 1 ]; then
+            echo "5. Wallet Data Files (wallet_data_${TIMESTAMP}.tar.gz)"
+        fi
+        echo
+        echo "Backup Verification Status:"
+        echo "- JSON files integrity: Verified"
+        echo "- Wallet data backup: $([ $backup_success -eq 1 ] && echo "Success" || echo "Failed")"
+        echo
+        echo "Note: Please keep this backup secure and encrypted"
+    } > "$wallet_backup_dir/backup_summary_${TIMESTAMP}.txt"
     
     # Final verification
-    if [ -f "$dump_file" ] || [ -f "$BACKUP_DIR/bitcoin/${wallet_name}/wallet_data_${TIMESTAMP}.tar.gz" ]; then
+    if ls "$wallet_backup_dir"/*_"${TIMESTAMP}"* >/dev/null 2>&1; then
         show_progress "Bitcoin wallet backup completed successfully"
+        show_progress "Backup location: $wallet_backup_dir"
         return 0
     else
         show_error "Backup files tidak ditemukan setelah proses backup"
         return 1
     fi
 }
-
 # Fungsi untuk backup wallet
 backup_wallets() {
     show_progress "Creating wallet backup..."
