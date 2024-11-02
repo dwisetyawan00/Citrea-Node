@@ -163,7 +163,7 @@ start_citrea_node() {
     if [ ! -f "genesis/genesis.json" ]; then
         show_error "Genesis file not found in expected location"
         return 1
-    }
+    fi
     
     # Start the node with correct arguments
     ./citrea-v0.5.4-linux-amd64 --genesis-paths genesis/genesis.json \
