@@ -27,6 +27,20 @@ show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
+get_node_name() {
+    local input_node_name=""
+    echo -ne "${CYAN}masukkan nama node: ${NC}"
+    read -r input_node_name
+        
+    # Validate node name (alphanumeric and underscores only)
+    while ! [[ $input_node_name =~ ^[a-zA-Z0-9_]+$ ]]; do
+        echo -e "${RED}Invalid node name. Use only letters, numbers, and underscores.${NC}"
+        echo -ne "${CYAN}masukkan nama node: ${NC}"
+        read -r input_node_name
+    done
+    echo "$input_node_name"
+}
+
 # Show logo function - now only in green
 show_logo() {
     echo -e "${GREEN}     ___      __    __       ___       __    __  "
@@ -151,42 +165,71 @@ setup_citrea() {
         return 1
     fi
     
-    if ! cd "${node_name}"; then
+    cd "${node_name}" || {
         show_error "Failed to enter directory: ${node_name}"
         return 1
-    fi
+    }
     
     # Create logs directory
     mkdir -p logs
     
-    # Download required files
+    # Download required files with explicit error checking
     show_progress "Downloading Citrea files..."
     
-    local files=(
-        "https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
-        "https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml"
-        "https://static.testnet.citrea.xyz/genesis.tar.gz"
-    )
+    local binary_url="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
+    local config_url="https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml"
+    local genesis_url="https://static.testnet.citrea.xyz/genesis.tar.gz"
     
-    for file in "${files[@]}"; do
-        local filename=$(basename "$file")
-        log_info "Downloading ${filename}..."
-        if ! wget -q "$file"; then
-            show_error "Failed to download ${filename}"
+    # Download binary with retries
+    log_info "Downloading citrea-v0.5.4-linux-amd64..."
+    for i in $(seq 1 3); do
+        if wget -q "$binary_url"; then
+            chmod +x citrea-v0.5.4-linux-amd64
+            log_info "Binary downloaded and made executable"
+            break
+        fi
+        if [ $i -eq 3 ]; then
+            show_error "Failed to download Citrea binary after 3 attempts"
             return 1
         fi
-        log_info "${filename} downloaded successfully"
+        log_warn "Binary download attempt $i failed, retrying..."
+        sleep 2
     done
     
-    # Extract genesis files
+    # Download config
+    log_info "Downloading rollup_config.toml..."
+    if ! wget -q "$config_url"; then
+        show_error "Failed to download configuration file"
+        return 1
+    fi
+    
+    # Download genesis
+    log_info "Downloading genesis.tar.gz..."
+    if ! wget -q "$genesis_url"; then
+        show_error "Failed to download genesis file"
+        return 1
+    fi
+    
+    # Extract genesis files with error checking
     log_info "Extracting genesis files..."
     if ! tar xzf genesis.tar.gz; then
         show_error "Failed to extract genesis files"
         return 1
     fi
     
-    # Set correct permissions
-    chmod +x ./citrea-v0.5.4-linux-amd64
+    # Verify binary exists and is executable
+    if [ ! -f "./citrea-v0.5.4-linux-amd64" ]; then
+        show_error "Binary not found after download"
+        return 1
+    fi
+    
+    if [ ! -x "./citrea-v0.5.4-linux-amd64" ]; then
+        chmod +x ./citrea-v0.5.4-linux-amd64
+        if [ ! -x "./citrea-v0.5.4-linux-amd64" ]; then
+            show_error "Failed to make binary executable"
+            return 1
+        fi
+    fi
     
     # Configure rollup_config.toml
     log_info "Configuring rollup_config.toml..."
@@ -380,27 +423,6 @@ verify_rpc_connection() {
     return 1
 }
 
-get_node_name() {
-    local input_node_name=""
-    while [ -z "$input_node_name" ]; do
-        echo -ne "${CYAN}Please enter node name (press Enter for default: $DEFAULT_NODE_NAME): ${NC}"
-        read -r input_node_name
-        
-        # Use default if empty
-        if [ -z "$input_node_name" ]; then
-            input_node_name="$DEFAULT_NODE_NAME"
-            echo -e "${GREEN}Using default node name: $input_node_name${NC}"
-        fi
-        
-        # Validate node name (alphanumeric and underscores only)
-        if ! [[ $input_node_name =~ ^[a-zA-Z0-9_]+$ ]]; then
-            echo -e "${RED}Invalid node name. Use only letters, numbers, and underscores.${NC}"
-            input_node_name=""
-        fi
-    done
-    echo "$input_node_name"
-}
-
 # Run diagnostics
 run_diagnostics() {
     log_info "Running diagnostics..."
@@ -468,10 +490,11 @@ EOF
 # Main function
 main() {
     clear
+    # Get node name first
+    node_name=$(get_node_name)
+    # Then show logo
     show_logo
     
-    # Get node name from user before starting any other operations
-    node_name=$(get_node_name)
     log_info "Starting installation for node: $node_name"
     
     # Rest of the installation steps
@@ -505,6 +528,8 @@ main() {
     show_node_info
     log_info "Installation completed successfully!"
 }
+
+# Rest of the script functions remain the same...
 
 # Handle script interruption
 trap 'log_error "Script interrupted. Cleaning up..."; exit 1' INT TERM
