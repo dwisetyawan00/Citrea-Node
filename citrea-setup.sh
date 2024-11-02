@@ -63,7 +63,7 @@ check_system_requirements() {
     if [ "$total_ram" -lt 4096 ]; then
         show_error "Minimum 4GB RAM required. Found: $total_ram MB"
         return 1
-    }
+    fi
     
     # Check disk space
     local free_space=$(df -m . | awk 'NR==2 {print $4}')
