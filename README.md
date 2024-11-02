@@ -20,8 +20,7 @@
 
 # Install Docker
 ```bash
-sudo apt update
-sudo apt upgrade -y
+sudo apt update && sudo apt upgrade -y
 ```
 ### Install dependencies
 ```bash
@@ -63,9 +62,6 @@ docker pull bitcoin/bitcoin:28.0rc1
 ```bash
 wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-setup.sh && chmod +x citrea-setup.sh && sudo ./citrea-setup.sh
 ```
-- Pilih 2 Manual
-  - Masukan nama node
-  - Enter biarkan default
 
 ## *SEBELUM CREATE WALLET PASTIKAN BLOCK SUDAH TERCAPAI*
 
