@@ -189,6 +189,7 @@ setup_citrea() {
 }
 
 # Fungsi untuk generate Bitcoin testnet4 wallet
+# Fungsi untuk generate Bitcoin testnet4 wallet
 generate_bitcoin_wallet() {
     local evm_privkey=$1
     show_progress "Setup Bitcoin testnet4 wallet..."
@@ -202,37 +203,63 @@ generate_bitcoin_wallet() {
             break
         fi
     done
+
+    # Step 1: Create wallet
+    show_progress "Step 1: Creating new Bitcoin wallet: $BTC_WALLET_NAME"
+    local create_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"createwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
-    # Derive Bitcoin private key from EVM private key
-    local btc_privkey=$(derive_bitcoin_key "$evm_privkey")
-    
-    # Import the private key to Bitcoin wallet
-    local import_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"importprivkey\", \"params\": [\"$btc_privkey\", \"citrea_derived\", false]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    if echo "$import_response" | jq -e '.error' > /dev/null; then
-        show_error "Failed to import Bitcoin private key: $(echo "$import_response" | jq -r '.error.message')"
+    if echo "$create_response" | jq -e '.error' > /dev/null; then
+        show_error "Failed to create Bitcoin wallet: $(echo "$create_response" | jq -r '.error.message')"
         return 1
     fi
     
-    # Get new address for the imported key
+    # Step 2: Load wallet
+    show_progress "Step 2: Loading wallet: $BTC_WALLET_NAME"
+    local load_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if echo "$load_response" | jq -e '.error' > /dev/null; then
+        show_error "Failed to load Bitcoin wallet: $(echo "$load_response" | jq -r '.error.message')"
+        return 1
+    fi
+
+    # Step 3: Generate new address
+    show_progress "Step 3: Generating new address"
     local address_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": ["citrea_derived"]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     local btc_address=$(echo "$address_response" | jq -r '.result')
     
-    if [ -n "$btc_address" ]; then
-        # Save wallet info
-        echo "Bitcoin Testnet4 Wallet (Derived from EVM)" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Address: $btc_address" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Private Key: $btc_privkey" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Derived from EVM Key: $evm_privkey" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-        
-        show_progress "Bitcoin wallet generated and saved"
-        show_warning "Please fund this address with testnet4 BTC: $btc_address"
-    else
+    if [ -z "$btc_address" ]; then
         show_error "Failed to generate Bitcoin address"
         return 1
     fi
+    
+    show_progress "Bitcoin address generated: $btc_address"
+
+    # Step 4: Get private key information using listdescriptors
+    show_progress "Step 4: Getting wallet descriptors and private keys"
+    local descriptor_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listdescriptors", "params": [true]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    if echo "$descriptor_response" | jq -e '.error' > /dev/null; then
+        show_error "Failed to get wallet descriptors: $(echo "$descriptor_response" | jq -r '.error.message')"
+        return 1
+    fi
+
+    # Extract private key information from descriptors
+    local descriptors=$(echo "$descriptor_response" | jq -r '.result.descriptors[]')
+    
+    # Save wallet info with comprehensive details
+    echo "Bitcoin Testnet4 Wallet" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Address: $btc_address" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Derived from EVM Private Key: $evm_privkey" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo -e "\nWallet Descriptors:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "$descriptors" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    
+    show_progress "Bitcoin wallet setup completed successfully"
+    show_warning "Please fund this address with testnet4 BTC: $btc_address"
+    show_warning "Wallet information saved to: $WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    
+    return 0
 }
 
 
