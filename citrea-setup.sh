@@ -29,13 +29,14 @@ show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
 get_node_name() {
     local input_node_name=""
-    echo -ne "${CYAN}Masukkan nama node: ${NC}"
+    # Menggunakan echo biasa alih-alih echo -ne
+    echo -e "${CYAN}Masukkan nama node: ${NC}"
     read -r input_node_name
     
     # Validate node name (alphanumeric and underscores only)
     while ! [[ $input_node_name =~ ^[a-zA-Z0-9_]+$ ]]; do
         echo -e "${RED}Invalid node name. Use only letters, numbers, and underscores.${NC}"
-        echo -ne "${CYAN}Masukkan nama node: ${NC}"
+        echo -e "${CYAN}Masukkan nama node: ${NC}"
         read -r input_node_name
     done
     
@@ -180,19 +181,16 @@ setup_citrea() {
     show_progress "Downloading Citrea files..."
     
     # Updated URLs based on documentation
-    local binary_url="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64.tar.gz"
+    local binary_url="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
     local config_url="https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml"
     local genesis_url="https://static.testnet.citrea.xyz/genesis.tar.gz"
     
-    # Download and extract binary with retries
+    # Download binary directly (not as tar.gz)
     log_info "Downloading citrea binary..."
     for i in $(seq 1 3); do
-        if wget -q "$binary_url" -O citrea.tar.gz; then
-            tar xzf citrea.tar.gz
-            chmod +x citrea
-            mv citrea citrea-v0.5.4-linux-amd64
-            rm citrea.tar.gz
-            log_info "Binary downloaded, extracted and made executable"
+        if wget -q "$binary_url" -O citrea-v0.5.4-linux-amd64; then
+            chmod +x citrea-v0.5.4-linux-amd64
+            log_info "Binary downloaded and made executable"
             break
         fi
         if [ $i -eq 3 ]; then
@@ -210,7 +208,7 @@ setup_citrea() {
         return 1
     fi
     
-    # Download genesis
+    # Download and extract genesis
     log_info "Downloading genesis.tar.gz..."
     if ! wget -q "$genesis_url"; then
         show_error "Failed to download genesis file"
