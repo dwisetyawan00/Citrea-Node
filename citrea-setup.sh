@@ -1,13 +1,10 @@
 #!/bin/bash
 
 # Colors for output
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
-BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Default configuration
@@ -30,24 +27,15 @@ show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
-# Show logo function
+# Show logo function - now only in green
 show_logo() {
-    # Definisi warna-warna
-    PURPLE='\033[0;35m'
-    CYAN='\033[0;36m'
-    YELLOW='\033[1;33m'
-    RED='\033[0;31m'
-    BLUE='\033[0;34m'
-    NC='\033[0m'
-
-    # Logo dengan gradasi warna
-    echo -e "${PURPLE}     ___      __    __       ___       __    __  "
-    echo -e "${CYAN}    /   \    |  |  |  |     /   \     |  |  |  | "
-    echo -e "${YELLOW}   /  ^  \   |  |  |  |    /  ^  \    |  |__|  | "
-    echo -e "${RED}  /  /_\  \  |  |  |  |   /  /_\  \   |   __   | "
-    echo -e "${BLUE} /  _____  \ |  \`--'  |  /  _____  \  |  |  |  | "
-    echo -e "${PURPLE}/__/     \__\ \______/  /__/     \__\ |__|  |__| "
-    echo -e "${CYAN}            Community ahh.. ahh.. ahh..${NC}"
+    echo -e "${GREEN}     ___      __    __       ___       __    __  "
+    echo -e "    /   \    |  |  |  |     /   \     |  |  |  | "
+    echo -e "   /  ^  \   |  |  |  |    /  ^  \    |  |__|  | "
+    echo -e "  /  /_\  \  |  |  |  |   /  /_\  \   |   __   | "
+    echo -e " /  _____  \ |  \`--'  |  /  _____  \  |  |  |  | "
+    echo -e "/__/     \__\ \______/  /__/     \__\ |__|  |__| "
+    echo -e "            Community ahh.. ahh.. ahh..${NC}"
     sleep 2
 }
 
@@ -221,21 +209,19 @@ setup_citrea() {
 }
 
 # Start Citrea node
-#!/bin/bash
-
-# ... (bagian sebelumnya tetap sama sampai fungsi start_citrea_node)
-
-# Enhanced start_citrea_node function with comprehensive error handling
 start_citrea_node() {
     log_info "Starting Citrea node..."
     
-    # Verify installation directory exists and is accessible
-    if [ ! -d "${node_name}" ]; then
-        show_error "Node directory ${node_name} not found"
-        return 1
+    # Create node directory if it doesn't exist
+    if [ ! -d "$node_name" ]; then
+        log_info "Creating node directory: $node_name"
+        mkdir -p "$node_name" || {
+            show_error "Failed to create node directory: $node_name"
+            return 1
+        }
     fi
     
-    cd "${node_name}" || {
+    cd "$node_name" || {
         show_error "Failed to enter node directory"
         return 1
     }
@@ -395,20 +381,24 @@ verify_rpc_connection() {
 }
 
 get_node_name() {
-    local node_name=""
-    while [ -z "$node_name" ]; do
-        echo -e "${CYAN}Enter node name (default: $DEFAULT_NODE_NAME):${NC} "
-        read -r node_name
-        if [ -z "$node_name" ]; then
-            node_name="$DEFAULT_NODE_NAME"
+    local input_node_name=""
+    while [ -z "$input_node_name" ]; do
+        echo -ne "${CYAN}Please enter node name (press Enter for default: $DEFAULT_NODE_NAME): ${NC}"
+        read -r input_node_name
+        
+        # Use default if empty
+        if [ -z "$input_node_name" ]; then
+            input_node_name="$DEFAULT_NODE_NAME"
+            echo -e "${GREEN}Using default node name: $input_node_name${NC}"
         fi
+        
         # Validate node name (alphanumeric and underscores only)
-        if ! [[ $node_name =~ ^[a-zA-Z0-9_]+$ ]]; then
+        if ! [[ $input_node_name =~ ^[a-zA-Z0-9_]+$ ]]; then
             echo -e "${RED}Invalid node name. Use only letters, numbers, and underscores.${NC}"
-            node_name=""
+            input_node_name=""
         fi
     done
-    echo "$node_name"
+    echo "$input_node_name"
 }
 
 # Run diagnostics
@@ -480,12 +470,11 @@ main() {
     clear
     show_logo
     
-    # Get node name from user
+    # Get node name from user before starting any other operations
     node_name=$(get_node_name)
-    log_info "Using node name: $node_name"
+    log_info "Starting installation for node: $node_name"
     
-    log_info "Starting Citrea Node Installation"
-    
+    # Rest of the installation steps
     local setup_steps=(
         "check_system_requirements"
         "install_missing_deps"
