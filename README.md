@@ -27,10 +27,6 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
 sudo apt-get install -y net-tools netcat curl wget jq gpg tar lsof
 ```
-### Exit dari VPS dan login kembali
-```bash
-exit
-```
 # ⚡ Quick Installation
 ```bash
 wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-setup.sh && chmod +x citrea-setup.sh && sudo ./citrea-setup.sh
