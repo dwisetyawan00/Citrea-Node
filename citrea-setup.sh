@@ -150,6 +150,66 @@ check_dependencies() {
     return 0
 }
 
+install_missing_deps() {
+    show_progress "Installing required system packages..."
+    sudo apt-get update
+    sudo apt-get install -y net-tools netcat curl wget jq gpg tar lsof
+}
+
+start_citrea_node() {
+    show_progress "Starting Citrea node..."
+    
+    # Verify genesis paths
+    if [ ! -f "genesis/genesis.json" ]; then
+        show_error "Genesis file not found in expected location"
+        return 1
+    }
+    
+    # Start the node with correct arguments
+    ./citrea-v0.5.4-linux-amd64 --genesis-paths genesis/genesis.json \
+        --config rollup_config.toml > citrea.log 2>&1 &
+    local pid=$!
+    
+    # Wait for node to start
+    sleep 10
+    
+    if ! ps -p $pid > /dev/null; then
+        show_error "Failed to start Citrea node"
+        log_error "Node startup failed. Check citrea.log for details:"
+        tail -n 20 citrea.log
+        return 1
+    fi
+    
+    log_info "Citrea node started with PID: $pid"
+    verify_node_status
+    return 0
+}
+
+verify_node_status() {
+    local max_attempts=5
+    local attempt=1
+    
+    while [ $attempt -le $max_attempts ]; do
+        log_info "Checking node status (attempt $attempt/$max_attempts)..."
+        
+        if curl -s -X POST \
+            --header "Content-Type: application/json" \
+            --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' \
+            http://0.0.0.0:${citrea_port} | grep -q "result"; then
+            
+            log_info "Node is responding to API calls"
+            return 0
+        fi
+        
+        log_warn "Node not responding yet, waiting..."
+        sleep 10
+        attempt=$((attempt + 1))
+    done
+    
+    log_error "Node failed to respond after $max_attempts attempts"
+    return 1
+}
+
 # Verify RPC connection
 verify_rpc_connection() {
     local attempt=1
@@ -209,27 +269,6 @@ setup_citrea() {
         return 1
     fi
     
-    return 0
-}
-
-start_citrea_node() {
-    show_progress "Starting Citrea node..."
-    
-    # Start the node in the background
-    ./citrea-v0.5.4-linux-amd64 node --config rollup_config.toml > citrea.log 2>&1 &
-    local pid=$!
-    
-    # Wait for node to start
-    sleep 10
-    
-    if ! ps -p $pid > /dev/null; then
-        show_error "Failed to start Citrea node"
-        log_error "Node startup failed. Check citrea.log for details:"
-        tail -n 20 citrea.log
-        return 1
-    fi
-    
-    log_info "Citrea node started with PID: $pid"
     return 0
 }
 
@@ -315,12 +354,13 @@ main() {
     esac
     
     # Setup steps
-    local setup_steps=(
-        "check_dependencies"
-        "setup_citrea"
-        "start_citrea_node"
-        "verify_rpc_connection"
-    )
+   local setup_steps=(
+    "install_missing_deps"  
+    "check_dependencies"
+    "setup_citrea"
+    "start_citrea_node"
+    "verify_rpc_connection"
+)
     
     for step in "${setup_steps[@]}"; do
         log_info "Executing step: $step"
