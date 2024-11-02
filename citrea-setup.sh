@@ -204,26 +204,36 @@ generate_bitcoin_wallet() {
         fi
     done
 
-    # Step 1: Create wallet
-    show_progress "Step 1: Creating new Bitcoin wallet: $BTC_WALLET_NAME"
+    # Step 1: Check if wallet exists and is loaded
+    show_progress "Step 1: Checking wallet status: $BTC_WALLET_NAME"
+    local wallet_list=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listwallets", "params": []}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
+    
+    # If wallet is already loaded, unload it first
+    if echo "$wallet_list" | grep -q "\"$BTC_WALLET_NAME\""; then
+        show_warning "Wallet already loaded, unloading first..."
+        curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"unloadwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port}
+        sleep 2
+    fi
+    
+    # Step 2: Create wallet (or load if exists)
+    show_progress "Step 2: Creating/loading wallet: $BTC_WALLET_NAME"
     local create_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"createwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
     if echo "$create_response" | jq -e '.error' > /dev/null; then
-        show_error "Failed to create Bitcoin wallet: $(echo "$create_response" | jq -r '.error.message')"
-        return 1
+        if echo "$create_response" | grep -q "Database already exists"; then
+            show_warning "Wallet already exists, loading instead..."
+        else
+            show_error "Failed to create Bitcoin wallet: $(echo "$create_response" | jq -r '.error.message')"
+            return 1
+        fi
     fi
     
-    # Step 2: Load wallet
-    show_progress "Step 2: Loading wallet: $BTC_WALLET_NAME"
+    # Step 3: Load wallet
+    show_progress "Step 3: Loading wallet: $BTC_WALLET_NAME"
     local load_response=$(curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"curltest\", \"method\": \"loadwallet\", \"params\": [\"$BTC_WALLET_NAME\"]}" -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     
-    if echo "$load_response" | jq -e '.error' > /dev/null; then
-        show_error "Failed to load Bitcoin wallet: $(echo "$load_response" | jq -r '.error.message')"
-        return 1
-    fi
-
-    # Step 3: Generate new address
-    show_progress "Step 3: Generating new address"
+    # Step 4: Generate new address
+    show_progress "Step 4: Generating new address"
     local address_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getnewaddress", "params": ["citrea_derived"]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
     local btc_address=$(echo "$address_response" | jq -r '.result')
     
@@ -234,30 +244,21 @@ generate_bitcoin_wallet() {
     
     show_progress "Bitcoin address generated: $btc_address"
 
-    # Step 4: Get private key information using listdescriptors
-    show_progress "Step 4: Getting wallet descriptors and private keys"
-    local descriptor_response=$(curl -s --user citrea:citrea --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "listdescriptors", "params": [true]}' -H 'content-type: text/plain;' http://0.0.0.0:${rpc_port})
-    
-    if echo "$descriptor_response" | jq -e '.error' > /dev/null; then
-        show_error "Failed to get wallet descriptors: $(echo "$descriptor_response" | jq -r '.error.message')"
-        return 1
-    fi
-
-    # Extract private key information from descriptors
-    local descriptors=$(echo "$descriptor_response" | jq -r '.result.descriptors[]')
-    
-    # Save wallet info with comprehensive details
+    # Save wallet info
     echo "Bitcoin Testnet4 Wallet" > "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Wallet Name: $BTC_WALLET_NAME" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Address: $btc_address" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Created: $(date)" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     echo "Derived from EVM Private Key: $evm_privkey" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo -e "\nWallet Descriptors:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
-    echo "$descriptors" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     
     show_progress "Bitcoin wallet setup completed successfully"
     show_warning "Please fund this address with testnet4 BTC: $btc_address"
     show_warning "Wallet information saved to: $WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    
+    # Add backup location info to main info file
+    echo -e "\nBackup Locations:" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Wallet Backups: $BACKUP_DIR/bitcoin/${BTC_WALLET_NAME}" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+    echo "Encrypted Backups: $BACKUP_DIR/bitcoin/${BTC_WALLET_NAME}/*.gpg" >> "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
     
     return 0
 }
@@ -454,16 +455,19 @@ show_wallet_info() {
     if [ -f "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt" ]; then
         echo "Bitcoin Wallet Name: $BTC_WALLET_NAME"
         grep "Address:" "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo -e "\nBackup Locations:"
+        echo "- Wallet Backups: $BACKUP_DIR/bitcoin/${BTC_WALLET_NAME}"
+        echo "- Encrypted Backups: $BACKUP_DIR/bitcoin/${BTC_WALLET_NAME}/*.gpg"
     fi
     
     if [ -f "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt" ]; then
         echo -e "\nEVM Wallet Name: $EVM_WALLET_NAME"
-        # Tidak menampilkan private key untuk keamanan
-        echo "Private key tersimpan di: $WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
+        echo "EVM Wallet Info: $WALLET_DIR/${EVM_WALLET_NAME}_info.txt"
+        echo "EVM Backups: $BACKUP_DIR/evm"
     fi
     
-    echo -e "\nWallet files location: $WALLET_DIR"
-    echo "Backup location: $BACKUP_DIR"
+    echo -e "\nWallet Directory: $WALLET_DIR"
+    echo "Main Backup Directory: $BACKUP_DIR"
 }
 
 # Fungsi untuk input manual
