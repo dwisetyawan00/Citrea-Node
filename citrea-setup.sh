@@ -216,10 +216,11 @@ run_bitcoin_node() {
         -p ${rpc_port}:${rpc_port} \
         -p $((rpc_port + 1)):$((rpc_port + 1)) \
         -v $HOME/.bitcoin:/root/.bitcoin \
-        --health-cmd='curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"health\", \"method\": \"getblockcount\", \"params\": []}" -H "content-type: text/plain;" http://localhost:18443' \
-        --health-interval=30s \
-        --health-timeout=10s \
-        --health-retries=3 \
+        --health-cmd='curl -s --user citrea:citrea --data-binary "{\"jsonrpc\": \"1.0\", \"id\":\"health\", \"method\": \"getblockcount\", \"params\": []}" -H "content-type: text/plain;" http://localhost:'${rpc_port} \
+        --health-interval=10s \
+        --health-timeout=5s \
+        --health-retries=5 \
+        --health-start-period=30s \
         bitcoin/bitcoin:28.0rc1 \
         -printtoconsole \
         -testnet4=1 \
@@ -235,20 +236,39 @@ run_bitcoin_node() {
         return 1
     fi
     
-    # Wait for container to be healthy
-    local max_wait=60
+    # Wait for container to be healthy with extended timeout
+    local max_wait=180  # Increased from 60 to 180 seconds
     local wait_time=0
     while [ $wait_time -lt $max_wait ]; do
-        if [ "$(docker inspect --format='{{.State.Health.Status}}' bitcoin-testnet4 2>/dev/null)" = "healthy" ]; then
-            log_info "Bitcoin node is healthy"
-            return 0
+        local container_status=$(docker inspect -f '{{.State.Status}}' bitcoin-testnet4 2>/dev/null)
+        local health_status=$(docker inspect -f '{{.State.Health.Status}}' bitcoin-testnet4 2>/dev/null)
+        
+        if [ "$container_status" = "running" ]; then
+            if [ "$health_status" = "healthy" ]; then
+                log_info "Bitcoin node is healthy"
+                return 0
+            elif [ "$health_status" = "starting" ]; then
+                log_info "Bitcoin node is starting..."
+            else
+                log_warn "Health status: $health_status"
+            fi
         fi
+        
         sleep 5
         wait_time=$((wait_time + 5))
         log_debug "Waiting for Bitcoin node to be healthy... ${wait_time}s/${max_wait}s"
+        
+        # Show logs if taking too long
+        if [ $((wait_time % 30)) -eq 0 ]; then
+            log_info "Recent container logs:"
+            docker logs --tail 5 bitcoin-testnet4
+        fi
     done
     
+    # If we get here, show the logs and return error
     log_error "Bitcoin node failed to become healthy within ${max_wait} seconds"
+    log_error "Container logs:"
+    docker logs --tail 20 bitcoin-testnet4
     return 1
 }
 
