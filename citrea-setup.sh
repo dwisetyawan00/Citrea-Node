@@ -155,20 +155,32 @@ configure_firewall() {
 setup_citrea() {
     show_progress "Setting up Citrea..."
     
-    # Create base directory if it doesn't exist
-    local base_dir="${PWD}/${node_name}"
-    if ! mkdir -p "${base_dir}"; then
-        show_error "Failed to create directory: ${base_dir}"
+    # Ensure we're working with absolute paths
+    local current_dir=$(pwd)
+    local node_dir="${current_dir}/${node_name}"
+    
+    log_info "Setting up node in directory: ${node_dir}"
+    
+    # Remove existing directory if exists
+    if [ -d "${node_dir}" ]; then
+        log_warn "Existing node directory found. Removing..."
+        rm -rf "${node_dir}"
+    fi
+    
+    # Create fresh directory
+    if ! mkdir -p "${node_dir}"; then
+        show_error "Failed to create directory: ${node_dir}"
         return 1
     fi
     
-    if ! cd "${base_dir}"; then
-        show_error "Failed to enter directory: ${base_dir}"
+    # Change to node directory
+    if ! cd "${node_dir}"; then
+        show_error "Failed to enter directory: ${node_dir}"
         return 1
     fi
     
     # Create logs directory
-    if ! mkdir -p logs; then
+    if ! mkdir -p "${node_dir}/logs"; then
         show_error "Failed to create logs directory"
         return 1
     fi
@@ -180,48 +192,53 @@ setup_citrea() {
     local config_url="https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml"
     local genesis_url="https://static.testnet.citrea.xyz/genesis.tar.gz"
     
+    log_info "Working directory: $(pwd)"
+    
     # Download binary
     log_info "Downloading citrea binary..."
-    if ! wget -q "$binary_url" -O citrea-v0.5.4-linux-amd64; then
+    if ! wget -q "$binary_url" -O "${node_dir}/citrea-v0.5.4-linux-amd64"; then
         show_error "Failed to download binary"
         return 1
     fi
-    chmod +x citrea-v0.5.4-linux-amd64
-
+    chmod +x "${node_dir}/citrea-v0.5.4-linux-amd64"
+    
     # Download config
     log_info "Downloading rollup_config.toml..."
-    if ! wget -q "$config_url"; then
+    if ! wget -q "$config_url" -O "${node_dir}/rollup_config.toml"; then
         show_error "Failed to download configuration file"
         return 1
     fi
     
     # Download genesis
     log_info "Downloading genesis.tar.gz..."
-    if ! wget -q "$genesis_url"; then
+    if ! wget -q "$genesis_url" -O "${node_dir}/genesis.tar.gz"; then
         show_error "Failed to download genesis file"
         return 1
     fi
     
     # Extract genesis files
     log_info "Extracting genesis files..."
-    if ! tar xf genesis.tar.gz; then
+    if ! cd "${node_dir}" || ! tar xf genesis.tar.gz; then
         show_error "Failed to extract genesis files"
         return 1
     fi
     
     # Verify files exist
-    if [ ! -f "rollup_config.toml" ] || [ ! -f "citrea-v0.5.4-linux-amd64" ]; then
+    if [ ! -f "${node_dir}/rollup_config.toml" ] || [ ! -f "${node_dir}/citrea-v0.5.4-linux-amd64" ]; then
         show_error "Required files missing after download"
         return 1
     fi
     
     # Configure rollup_config.toml
     log_info "Configuring rollup_config.toml..."
-    sed -i "s/rpc_host = .*/rpc_host = \"0.0.0.0\"/" rollup_config.toml
-    sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
-    sed -i "s/api_host = .*/api_host = \"0.0.0.0\"/" rollup_config.toml
-    sed -i "s/api_port = .*/api_port = ${citrea_port}/" rollup_config.toml
-    sed -i "s/network = .*/network = \"testnet\"/" rollup_config.toml
+    sed -i "s/rpc_host = .*/rpc_host = \"0.0.0.0\"/" "${node_dir}/rollup_config.toml"
+    sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" "${node_dir}/rollup_config.toml"
+    sed -i "s/api_host = .*/api_host = \"0.0.0.0\"/" "${node_dir}/rollup_config.toml"
+    sed -i "s/api_port = .*/api_port = ${citrea_port}/" "${node_dir}/rollup_config.toml"
+    sed -i "s/network = .*/network = \"testnet\"/" "${node_dir}/rollup_config.toml"
+    
+    # Save node directory path for other functions
+    echo "${node_dir}" > /tmp/citrea_node_path
     
     log_info "Configuration updated successfully"
     return 0
@@ -231,26 +248,34 @@ setup_citrea() {
 start_citrea_node() {
     log_info "Starting Citrea node..."
     
-    local base_dir="${PWD}/${node_name}"
-    if [ ! -d "$base_dir" ]; then
-        show_error "Node directory not found: ${base_dir}"
+    # Get node directory path from temp file
+    local node_dir=$(cat /tmp/citrea_node_path)
+    
+    if [ ! -d "$node_dir" ]; then
+        show_error "Node directory not found: ${node_dir}"
         return 1
     fi
     
-    if ! cd "${base_dir}"; then
-        show_error "Failed to enter node directory: ${base_dir}"
+    log_info "Using node directory: ${node_dir}"
+    
+    if ! cd "${node_dir}"; then
+        show_error "Failed to enter node directory: ${node_dir}"
         return 1
     fi
     
     # Verify required files exist
-    if [ ! -f "citrea-v0.5.4-linux-amd64" ] || [ ! -f "rollup_config.toml" ]; then
+    if [ ! -f "${node_dir}/citrea-v0.5.4-linux-amd64" ] || [ ! -f "${node_dir}/rollup_config.toml" ]; then
         show_error "Required files missing. Please check installation."
+        ls -la "${node_dir}"  # Debug output
         return 1
     fi
     
     # Create startup script
-    cat > start.sh << 'EOF'
+    cat > "${node_dir}/start.sh" << 'EOF'
 #!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+cd "${SCRIPT_DIR}"
+
 exec 1> >(tee -a logs/citrea.log)
 exec 2>&1
 
@@ -278,18 +303,28 @@ fi
 echo "Node started successfully"
 EOF
     
-    chmod +x start.sh
+    chmod +x "${node_dir}/start.sh"
     
     # Start the node
-    if ! ./start.sh; then
+    if ! "${node_dir}/start.sh"; then
         show_error "Failed to start node process"
-        cat logs/citrea.log
+        cat "${node_dir}/logs/citrea.log"
         return 1
     fi
     
     log_info "Citrea node started successfully"
     return 0
 }
+
+# Tambahkan fungsi cleanup
+cleanup() {
+    if [ -f /tmp/citrea_node_path ]; then
+        rm /tmp/citrea_node_path
+    fi
+}
+
+# Tambahkan trap untuk cleanup
+trap cleanup EXIT
 
 # Verify RPC connection
 verify_rpc_connection() {
