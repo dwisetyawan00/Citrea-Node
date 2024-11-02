@@ -27,29 +27,6 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
 sudo apt-get install -y net-tools netcat curl wget jq gpg tar lsof
 ```
-
-### Install Docker
-```bash
-sudo apt install -y docker.io
-```
-### Start dan enable Docker service
-```bash
-sudo systemctl start docker
-sudo systemctl enable docker
-```
-### Tambahkan user ke group docker
-```bash
-sudo usermod -aG docker $USER
-```
-### Install docker compose
-```bash
-sudo apt install -y docker-compose
-```
-### Verifikasi instalasi
-```bash
-docker --version
-docker-compose --version
-```
 ### Exit dari VPS dan login kembali
 ```bash
 exit
@@ -69,7 +46,11 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/create-wal
 
 # 📝 Check Logs
 ```bash
-curl -X POST --header "Content-Type: application/json" --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' http://0.0.0.0:8080
+wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/check-node.sh && chmod +x check-node.sh && sudo ./check-node.sh
+```
+### Sebeleum menjalankan pastikan berada di direcotry ayng bersikan *`./check-node.sh*`
+```bash
+sudo ./check-node.sh
 ```
 ```bash
 tail -f citrea.log
