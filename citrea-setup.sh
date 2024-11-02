@@ -11,6 +11,7 @@ NC='\033[0m'
 DEFAULT_NODE_NAME="citrea_node"
 rpc_port=8545
 citrea_port=8546
+node_name=""
 
 # Variables for diagnostics
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -27,22 +28,19 @@ show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
+# Modified get_node_name function
 get_node_name() {
-    local input_node_name=""
-    # Menggunakan echo biasa alih-alih echo -ne
-    echo -e "${CYAN}Masukkan nama node: ${NC}"
-    read -r input_node_name
-    
-    # Validate node name (alphanumeric and underscores only)
-    while ! [[ $input_node_name =~ ^[a-zA-Z0-9_]+$ ]]; do
-        echo -e "${RED}Invalid node name. Use only letters, numbers, and underscores.${NC}"
-        echo -e "${CYAN}Masukkan nama node: ${NC}"
-        read -r input_node_name
+    while true; do
+        printf "${CYAN}Masukkan nama node: ${NC}"
+        read -r input
+        
+        if [[ $input =~ ^[a-zA-Z0-9_]+$ ]]; then
+            node_name="$input"
+            break
+        else
+            echo -e "${RED}Nama node hanya boleh menggunakan huruf, angka, dan underscore${NC}"
+        fi
     done
-    
-    # Set global node_name variable
-    node_name="$input_node_name"
-    return 0
 }
 
 # Show logo function - now only in green
@@ -164,10 +162,10 @@ setup_citrea() {
     fi
     
     # Create and enter installation directory
-    if ! mkdir -p "${node_name}"; then
+    mkdir -p "${node_name}" || {
         show_error "Failed to create directory: ${node_name}"
         return 1
-    fi
+    }
     
     cd "${node_name}" || {
         show_error "Failed to enter directory: ${node_name}"
@@ -177,29 +175,20 @@ setup_citrea() {
     # Create logs directory
     mkdir -p logs
     
-    # Download required files with explicit error checking
+    # Download required files
     show_progress "Downloading Citrea files..."
     
-    # Updated URLs based on documentation
     local binary_url="https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
     local config_url="https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml"
     local genesis_url="https://static.testnet.citrea.xyz/genesis.tar.gz"
     
-    # Download binary directly (not as tar.gz)
+    # Download binary
     log_info "Downloading citrea binary..."
-    for i in $(seq 1 3); do
-        if wget -q "$binary_url" -O citrea-v0.5.4-linux-amd64; then
-            chmod +x citrea-v0.5.4-linux-amd64
-            log_info "Binary downloaded and made executable"
-            break
-        fi
-        if [ $i -eq 3 ]; then
-            show_error "Failed to download Citrea binary after 3 attempts"
-            return 1
-        fi
-        log_warn "Binary download attempt $i failed, retrying..."
-        sleep 2
-    done
+    if ! wget -q "$binary_url" -O citrea-v0.5.4-linux-amd64; then
+        show_error "Failed to download binary"
+        return 1
+    fi
+    chmod +x citrea-v0.5.4-linux-amd64
     
     # Download config
     log_info "Downloading rollup_config.toml..."
@@ -208,23 +197,17 @@ setup_citrea() {
         return 1
     fi
     
-    # Download and extract genesis
+    # Download genesis
     log_info "Downloading genesis.tar.gz..."
     if ! wget -q "$genesis_url"; then
         show_error "Failed to download genesis file"
         return 1
     fi
     
-    # Extract genesis files with error checking
+    # Extract genesis files
     log_info "Extracting genesis files..."
-    if ! tar xzf genesis.tar.gz; then
+    if ! tar xf genesis.tar.gz; then
         show_error "Failed to extract genesis files"
-        return 1
-    fi
-    
-    # Verify binary exists and is executable
-    if [ ! -f "./citrea-v0.5.4-linux-amd64" ]; then
-        show_error "Binary not found after download"
         return 1
     fi
     
@@ -235,10 +218,7 @@ setup_citrea() {
         return 1
     fi
     
-    # Backup original config
-    cp rollup_config.toml rollup_config.toml.backup
-    
-    # Update configuration dengan nilai yang sesuai dari dokumentasi
+    # Update configuration
     sed -i "s/rpc_host = .*/rpc_host = \"0.0.0.0\"/" rollup_config.toml
     sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
     sed -i "s/api_host = .*/api_host = \"0.0.0.0\"/" rollup_config.toml
@@ -253,44 +233,33 @@ setup_citrea() {
 start_citrea_node() {
     log_info "Starting Citrea node..."
     
-    cd "$node_name" || {
-        show_error "Failed to enter node directory"
+    local node_dir="$(pwd)/${node_name}"
+    cd "${node_name}" || {
+        show_error "Failed to enter node directory: ${node_name}"
         return 1
     }
     
-    # Check if binary exists and is executable
-    if [ ! -f "./citrea-v0.5.4-linux-amd64" ]; then
-        show_error "Citrea binary not found"
-        return 1
-    fi
-    
-    # Create startup script with proper error handling
+    # Create startup script
     cat > start.sh << 'EOF'
 #!/bin/bash
 exec 1> >(tee -a logs/citrea.log)
 exec 2>&1
 
-# Kill existing process if PID file exists
 if [ -f citrea.pid ]; then
     old_pid=$(cat citrea.pid)
     if kill -0 "$old_pid" 2>/dev/null; then
-        echo "Killing existing process: $old_pid"
         kill "$old_pid"
         sleep 2
     fi
 fi
 
-# Start the node with detailed logging
 echo "Starting Citrea node at $(date)"
 ./citrea-v0.5.4-linux-amd64 start --config rollup_config.toml &
-
-# Store PID
 echo $! > citrea.pid
 
-# Wait briefly to check if process stays running
 sleep 5
 if ! kill -0 $(cat citrea.pid) 2>/dev/null; then
-    echo "Process failed to start or died immediately"
+    echo "Process failed to start"
     exit 1
 fi
 EOF
@@ -306,6 +275,37 @@ EOF
     return 0
 }
 
+# Main function
+main() {
+    clear
+    show_logo
+    get_node_name
+    
+    log_info "Starting installation for node: $node_name"
+    
+    local setup_steps=(
+        "check_system_requirements"
+        "install_missing_deps"
+        "check_dependencies"
+        "configure_firewall"
+        "setup_citrea"
+        "start_citrea_node"
+        "verify_rpc_connection"
+    )
+    
+    for step in "${setup_steps[@]}"; do
+        log_info "Executing step: $step"
+        if ! $step; then
+            log_error "Failed at step: $step"
+            log_info "Running post-failure diagnostics..."
+            run_diagnostics
+            exit 1
+        fi
+    done
+    
+    show_node_info
+    log_info "Installation completed successfully!"
+}
 # Verify RPC connection
 verify_rpc_connection() {
     log_info "Verifying RPC connection..."
