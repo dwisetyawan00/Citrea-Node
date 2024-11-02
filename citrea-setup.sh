@@ -275,37 +275,6 @@ EOF
     return 0
 }
 
-# Main function
-main() {
-    clear
-    show_logo
-    get_node_name
-    
-    log_info "Starting installation for node: $node_name"
-    
-    local setup_steps=(
-        "check_system_requirements"
-        "install_missing_deps"
-        "check_dependencies"
-        "configure_firewall"
-        "setup_citrea"
-        "start_citrea_node"
-        "verify_rpc_connection"
-    )
-    
-    for step in "${setup_steps[@]}"; do
-        log_info "Executing step: $step"
-        if ! $step; then
-            log_error "Failed at step: $step"
-            log_info "Running post-failure diagnostics..."
-            run_diagnostics
-            exit 1
-        fi
-    done
-    
-    show_node_info
-    log_info "Installation completed successfully!"
-}
 # Verify RPC connection
 verify_rpc_connection() {
     log_info "Verifying RPC connection..."
@@ -412,14 +381,11 @@ EOF
 # Main function
 main() {
     clear
-    # Get node name first
-    node_name=$(get_node_name)
-    # Then show logo
     show_logo
+    get_node_name
     
     log_info "Starting installation for node: $node_name"
     
-    # Rest of the installation steps
     local setup_steps=(
         "check_system_requirements"
         "install_missing_deps"
@@ -436,13 +402,6 @@ main() {
             log_error "Failed at step: $step"
             log_info "Running post-failure diagnostics..."
             run_diagnostics
-            
-            # Show logs if they exist
-            if [ -f "${node_name}/logs/citrea.log" ]; then
-                echo -e "\n${YELLOW}=== Last 20 lines of citrea.log ===${NC}"
-                tail -n 20 "${node_name}/logs/citrea.log"
-            fi
-            
             exit 1
         fi
     done
@@ -450,8 +409,6 @@ main() {
     show_node_info
     log_info "Installation completed successfully!"
 }
-
-# Rest of the script functions remain the same...
 
 # Handle script interruption
 trap 'log_error "Script interrupted. Cleaning up..."; exit 1' INT TERM
