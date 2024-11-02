@@ -26,6 +26,7 @@ sudo apt upgrade -y
 ### Install dependencies
 ```bash
 sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
+sudo apt-get install -y net-tools netcat curl wget jq gpg tar lsof
 ```
 
 ### Install Docker
