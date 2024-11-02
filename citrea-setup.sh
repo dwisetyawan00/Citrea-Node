@@ -173,7 +173,7 @@ main() {
         if ! nc -z localhost ${citrea_port}; then
             show_error "Citrea port ${citrea_port} is not accessible"
             return 1
-        }
+        fi
         
         log_info "Installation verified successfully"
         return 0
