@@ -1,13 +1,17 @@
 #!/bin/bash
 
 # Colors for output
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Default configuration
-node_name="citrea_node"
+DEFAULT_NODE_NAME="citrea_node"
 rpc_port=8545
 citrea_port=8546
 
@@ -37,12 +41,12 @@ show_logo() {
     NC='\033[0m'
 
     # Logo dengan gradasi warna
-    echo -e "${PURPLE}      ___      __    __       ___       __    __  "
-    echo -e "${CYAN}       /   \    |  |  |  |     /   \     |  |  |  | "
-    echo -e "${YELLOW}    /  ^  \   |  |  |  |    /  ^  \    |  |__|  | "
-    echo -e "${RED}      /  /_\  \  |  |  |  |   /  /_\  \   |   __   | "
-    echo -e "${BLUE}    /  _____  \ | \`--'  |  /  _____  \  |  |  |  | "
-    echo -e "${PURPLE} /__/     \__\ \______/  /__/     \__\ |__|  |__| "
+    echo -e "${PURPLE}     ___      __    __       ___       __    __  "
+    echo -e "${CYAN}    /   \    |  |  |  |     /   \     |  |  |  | "
+    echo -e "${YELLOW}   /  ^  \   |  |  |  |    /  ^  \    |  |__|  | "
+    echo -e "${RED}  /  /_\  \  |  |  |  |   /  /_\  \   |   __   | "
+    echo -e "${BLUE} /  _____  \ |  \`--'  |  /  _____  \  |  |  |  | "
+    echo -e "${PURPLE}/__/     \__\ \______/  /__/     \__\ |__|  |__| "
     echo -e "${CYAN}            Community ahh.. ahh.. ahh..${NC}"
     sleep 2
 }
@@ -217,28 +221,136 @@ setup_citrea() {
 }
 
 # Start Citrea node
+#!/bin/bash
+
+# ... (bagian sebelumnya tetap sama sampai fungsi start_citrea_node)
+
+# Enhanced start_citrea_node function with comprehensive error handling
 start_citrea_node() {
     log_info "Starting Citrea node..."
     
-    # Create startup script
-    cat > start.sh << EOF
+    # Verify installation directory exists and is accessible
+    if [ ! -d "${node_name}" ]; then
+        show_error "Node directory ${node_name} not found"
+        return 1
+    fi
+    
+    cd "${node_name}" || {
+        show_error "Failed to enter node directory"
+        return 1
+    }
+    
+    # Check if binary exists and is executable
+    if [ ! -f "./citrea-v0.5.4-linux-amd64" ]; then
+        show_error "Citrea binary not found"
+        return 1
+    fi
+    
+    if [ ! -x "./citrea-v0.5.4-linux-amd64" ]; then
+        show_error "Citrea binary is not executable"
+        chmod +x ./citrea-v0.5.4-linux-amd64
+    fi
+    
+    # Verify config file
+    if [ ! -f "./rollup_config.toml" ]; then
+        show_error "Configuration file not found"
+        return 1
+    fi
+    
+    # Check if ports are already in use
+    if netstat -tuln | grep -q ":${rpc_port}"; then
+        show_error "RPC port ${rpc_port} is already in use"
+        return 1
+    fi
+    
+    if netstat -tuln | grep -q ":${citrea_port}"; then
+        show_error "Citrea port ${citrea_port} is already in use"
+        return 1
+    fi
+    
+    # Ensure logs directory exists and is writable
+    mkdir -p logs
+    if [ ! -w "logs" ]; then
+        show_error "Logs directory is not writable"
+        return 1
+    fi
+    
+    # Create startup script with proper error handling
+    cat > start.sh << 'EOF'
 #!/bin/bash
-./citrea-v0.5.4-linux-amd64 --config rollup_config.toml > logs/citrea.log 2>&1 &
-echo \$! > citrea.pid
+exec 1> >(tee -a logs/citrea.log)
+exec 2>&1
+
+# Kill existing process if PID file exists
+if [ -f citrea.pid ]; then
+    old_pid=$(cat citrea.pid)
+    if kill -0 "$old_pid" 2>/dev/null; then
+        echo "Killing existing process: $old_pid"
+        kill "$old_pid"
+        sleep 2
+    fi
+fi
+
+# Start the node with detailed logging
+echo "Starting Citrea node at $(date)"
+./citrea-v0.5.4-linux-amd64 --config rollup_config.toml &
+
+# Store PID
+echo $! > citrea.pid
+
+# Wait briefly to check if process stays running
+sleep 5
+if ! kill -0 $(cat citrea.pid) 2>/dev/null; then
+    echo "Process failed to start or died immediately"
+    exit 1
+fi
 EOF
     
     chmod +x start.sh
     
-    # Start the node
-    ./start.sh
+    log_info "Starting node process..."
+    if ! ./start.sh; then
+        show_error "Failed to start node process"
+        if [ -f logs/citrea.log ]; then
+            log_error "Last 10 lines of log:"
+            tail -n 10 logs/citrea.log
+        fi
+        return 1
+    fi
     
-    # Check if process started
-    sleep 5
-    if [ -f citrea.pid ] && kill -0 $(cat citrea.pid) 2>/dev/null; then
-        log_info "Citrea node started successfully"
-        return 0
+    # Enhanced process verification
+    local max_wait=30
+    local counter=0
+    local pid
+    
+    if [ -f citrea.pid ]; then
+        pid=$(cat citrea.pid)
+        
+        while [ $counter -lt $max_wait ]; do
+            if kill -0 "$pid" 2>/dev/null; then
+                # Check if ports are listening
+                sleep 2
+                if netstat -tuln | grep -q ":${rpc_port}" && \
+                   netstat -tuln | grep -q ":${citrea_port}"; then
+                    log_info "Citrea node started successfully with PID: $pid"
+                    return 0
+                fi
+            else
+                show_error "Process died after starting. Check logs for details"
+                if [ -f logs/citrea.log ]; then
+                    tail -n 20 logs/citrea.log
+                fi
+                return 1
+            fi
+            
+            counter=$((counter + 1))
+            sleep 1
+        done
+        
+        show_error "Node started but ports are not listening after ${max_wait} seconds"
+        return 1
     else
-        show_error "Failed to start Citrea node"
+        show_error "PID file not created"
         return 1
     fi
 }
@@ -249,6 +361,19 @@ verify_rpc_connection() {
     
     local retry_count=0
     while [ $retry_count -lt $MAX_RETRIES ]; do
+        # First check if process is still running
+        if [ -f "${node_name}/citrea.pid" ]; then
+            local pid=$(cat "${node_name}/citrea.pid")
+            if ! kill -0 "$pid" 2>/dev/null; then
+                show_error "Node process is not running"
+                return 1
+            fi
+        else
+            show_error "PID file not found"
+            return 1
+        fi
+        
+        # Try RPC connection
         if curl -s -X POST -H "Content-Type: application/json" \
             --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[],"id":1}' \
             http://localhost:${citrea_port} > /dev/null; then
@@ -262,41 +387,73 @@ verify_rpc_connection() {
     done
     
     show_error "Failed to verify RPC connection after $MAX_RETRIES attempts"
+    if [ -f "${node_name}/logs/citrea.log" ]; then
+        log_error "Last 20 lines of node log:"
+        tail -n 20 "${node_name}/logs/citrea.log"
+    fi
     return 1
+}
+
+get_node_name() {
+    local node_name=""
+    while [ -z "$node_name" ]; do
+        echo -e "${CYAN}Enter node name (default: $DEFAULT_NODE_NAME):${NC} "
+        read -r node_name
+        if [ -z "$node_name" ]; then
+            node_name="$DEFAULT_NODE_NAME"
+        fi
+        # Validate node name (alphanumeric and underscores only)
+        if ! [[ $node_name =~ ^[a-zA-Z0-9_]+$ ]]; then
+            echo -e "${RED}Invalid node name. Use only letters, numbers, and underscores.${NC}"
+            node_name=""
+        fi
+    done
+    echo "$node_name"
 }
 
 # Run diagnostics
 run_diagnostics() {
     log_info "Running diagnostics..."
     
+    # Check system resources
+    log_info "System Resources:"
+    echo "CPU Usage: $(top -bn1 | grep "Cpu(s)" | awk '{print $2}')%"
+    echo "Memory Usage: $(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2}')"
+    echo "Disk Usage: $(df -h . | awk 'NR==2{print $5}')"
+    
     # Check process status
     if [ -f "${node_name}/citrea.pid" ]; then
         local pid=$(cat "${node_name}/citrea.pid")
         if kill -0 "$pid" 2>/dev/null; then
             log_info "Citrea process is running (PID: $pid)"
+            ps -p "$pid" -o %cpu,%mem,cmd
         else
             log_error "Citrea process is not running"
         fi
     fi
     
-    # Check logs for errors
-    if [ -f "${node_name}/logs/citrea.log" ]; then
-        log_info "Last 10 lines of citrea.log:"
-        tail -n 10 "${node_name}/logs/citrea.log"
-    fi
-    
     # Check port status
     log_info "Checking port status..."
-    if nc -z localhost ${rpc_port}; then
-        log_info "RPC port ${rpc_port} is open"
+    echo "Network connections:"
+    netstat -tuln | grep -E "${rpc_port}|${citrea_port}" || echo "No ports listening"
+    
+    # Check firewall status
+    log_info "Firewall status:"
+    sudo ufw status | grep -E "${rpc_port}|${citrea_port}"
+    
+    # Check configuration
+    log_info "Configuration check:"
+    if [ -f "${node_name}/rollup_config.toml" ]; then
+        echo "Config file exists and contains:"
+        grep -E "rpc_port|api_port" "${node_name}/rollup_config.toml"
     else
-        log_error "RPC port ${rpc_port} is not accessible"
+        log_error "Configuration file missing"
     fi
     
-    if nc -z localhost ${citrea_port}; then
-        log_info "Citrea port ${citrea_port} is open"
-    else
-        log_error "Citrea port ${citrea_port} is not accessible"
+    # Check logs
+    if [ -f "${node_name}/logs/citrea.log" ]; then
+        log_info "Last 20 lines of citrea.log:"
+        tail -n 20 "${node_name}/logs/citrea.log"
     fi
 }
 
@@ -323,6 +480,10 @@ main() {
     clear
     show_logo
     
+    # Get node name from user
+    node_name=$(get_node_name)
+    log_info "Using node name: $node_name"
+    
     log_info "Starting Citrea Node Installation"
     
     local setup_steps=(
@@ -341,9 +502,15 @@ main() {
             log_error "Failed at step: $step"
             log_info "Running post-failure diagnostics..."
             run_diagnostics
+            
+            # Show logs if they exist
+            if [ -f "${node_name}/logs/citrea.log" ]; then
+                echo -e "\n${YELLOW}=== Last 20 lines of citrea.log ===${NC}"
+                tail -n 20 "${node_name}/logs/citrea.log"
+            fi
+            
             exit 1
         fi
-        sleep 2
     done
     
     show_node_info
