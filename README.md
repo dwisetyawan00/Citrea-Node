@@ -46,10 +46,11 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/check-node
 ```
 ### Sebeleum menjalankan pastikan berada di direcotry ayng bersikan *`./check-node.sh*`
 ```bash
-sudo ./check-node.sh
+./check-node.sh
 ```
+### Untuk melihat node sync setiap 10 dtk
 ```bash
-tail -f citrea.log
+./check_nodes.sh --monitor
 ```
 # ⚙️ Service Management
 ## Monitoring Status:
