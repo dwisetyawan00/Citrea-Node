@@ -472,7 +472,7 @@ setup_wallets() {
         if [ $? -ne 0 ]; then
             show_error "Gagal generate Bitcoin wallet"
             return 1
-        }
+        fi
         
         # Tampilkan report wallet
         show_wallet_report "$evm_privkey"
