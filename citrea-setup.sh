@@ -70,7 +70,7 @@ check_system_requirements() {
     if [ "$free_space" -lt 20480 ]; then
         show_error "Minimum 20GB free space required. Found: $free_space MB"
         return 1
-    }
+    fi
     
     log_info "System requirements met"
     return 0
