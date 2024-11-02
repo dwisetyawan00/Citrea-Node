@@ -54,10 +54,6 @@ docker-compose --version
 ```bash
 exit
 ```
-### Test pull image Bitcoin
-```bash
-docker pull bitcoin/bitcoin:28.0rc1
-```
 # ⚡ Quick Installation
 ```bash
 wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-setup.sh && chmod +x citrea-setup.sh && sudo ./citrea-setup.sh
