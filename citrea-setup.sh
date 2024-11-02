@@ -346,7 +346,7 @@ verify_backup_integrity() {
         if [ ! -s "$backup_dir/$file" ]; then
             show_error "File backup kosong: $file"
             return 1
-        }
+        fi
         
         # Verifikasi format JSON
         if ! jq empty "$backup_dir/$file" 2>/dev/null; then
