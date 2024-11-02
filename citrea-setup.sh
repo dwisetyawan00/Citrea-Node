@@ -155,25 +155,23 @@ configure_firewall() {
 setup_citrea() {
     show_progress "Setting up Citrea..."
     
-    # Clean up existing installation if present
-    if [ -d "${node_name}" ]; then
-        log_warn "Existing installation found. Cleaning up..."
-        rm -rf "${node_name}"
+    # Create base directory if it doesn't exist
+    local base_dir="${PWD}/${node_name}"
+    if ! mkdir -p "${base_dir}"; then
+        show_error "Failed to create directory: ${base_dir}"
+        return 1
     fi
     
-    # Create and enter installation directory
-    mkdir -p "${node_name}" || {
-        show_error "Failed to create directory: ${node_name}"
+    if ! cd "${base_dir}"; then
+        show_error "Failed to enter directory: ${base_dir}"
         return 1
-    }
-    
-    cd "${node_name}" || {
-        show_error "Failed to enter directory: ${node_name}"
-        return 1
-    }
+    fi
     
     # Create logs directory
-    mkdir -p logs
+    if ! mkdir -p logs; then
+        show_error "Failed to create logs directory"
+        return 1
+    fi
     
     # Download required files
     show_progress "Downloading Citrea files..."
@@ -189,7 +187,7 @@ setup_citrea() {
         return 1
     fi
     chmod +x citrea-v0.5.4-linux-amd64
-    
+
     # Download config
     log_info "Downloading rollup_config.toml..."
     if ! wget -q "$config_url"; then
@@ -211,14 +209,14 @@ setup_citrea() {
         return 1
     fi
     
-    # Configure rollup_config.toml
-    log_info "Configuring rollup_config.toml..."
-    if [ ! -f rollup_config.toml ]; then
-        show_error "rollup_config.toml not found after download"
+    # Verify files exist
+    if [ ! -f "rollup_config.toml" ] || [ ! -f "citrea-v0.5.4-linux-amd64" ]; then
+        show_error "Required files missing after download"
         return 1
     fi
     
-    # Update configuration
+    # Configure rollup_config.toml
+    log_info "Configuring rollup_config.toml..."
     sed -i "s/rpc_host = .*/rpc_host = \"0.0.0.0\"/" rollup_config.toml
     sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
     sed -i "s/api_host = .*/api_host = \"0.0.0.0\"/" rollup_config.toml
@@ -233,11 +231,22 @@ setup_citrea() {
 start_citrea_node() {
     log_info "Starting Citrea node..."
     
-    local node_dir="$(pwd)/${node_name}"
-    cd "${node_name}" || {
-        show_error "Failed to enter node directory: ${node_name}"
+    local base_dir="${PWD}/${node_name}"
+    if [ ! -d "$base_dir" ]; then
+        show_error "Node directory not found: ${base_dir}"
         return 1
-    }
+    fi
+    
+    if ! cd "${base_dir}"; then
+        show_error "Failed to enter node directory: ${base_dir}"
+        return 1
+    fi
+    
+    # Verify required files exist
+    if [ ! -f "citrea-v0.5.4-linux-amd64" ] || [ ! -f "rollup_config.toml" ]; then
+        show_error "Required files missing. Please check installation."
+        return 1
+    fi
     
     # Create startup script
     cat > start.sh << 'EOF'
@@ -248,26 +257,33 @@ exec 2>&1
 if [ -f citrea.pid ]; then
     old_pid=$(cat citrea.pid)
     if kill -0 "$old_pid" 2>/dev/null; then
+        echo "Stopping old process..."
         kill "$old_pid"
-        sleep 2
+        sleep 5
     fi
+    rm citrea.pid
 fi
 
 echo "Starting Citrea node at $(date)"
 ./citrea-v0.5.4-linux-amd64 start --config rollup_config.toml &
 echo $! > citrea.pid
 
+# Wait for process to start
 sleep 5
 if ! kill -0 $(cat citrea.pid) 2>/dev/null; then
     echo "Process failed to start"
     exit 1
 fi
+
+echo "Node started successfully"
 EOF
     
     chmod +x start.sh
     
+    # Start the node
     if ! ./start.sh; then
         show_error "Failed to start node process"
+        cat logs/citrea.log
         return 1
     fi
     
