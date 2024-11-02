@@ -557,7 +557,7 @@ backup_wallets() {
     if ! verify_rpc_connection; then
         show_error "Bitcoin node not accessible for backup"
         return 1
-    }
+    fi
     
     # Backup Bitcoin wallet if exists
     if [ -n "$BTC_WALLET_NAME" ]; then
