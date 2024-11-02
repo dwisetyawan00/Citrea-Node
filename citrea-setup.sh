@@ -27,6 +27,86 @@ show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
+# Diagnostic Functions
+check_citrea_process() {
+    log_info "Checking Citrea process..."
+    if pgrep -f "citrea-v0.5.4-linux-amd64" > /dev/null; then
+        log_info "Citrea process is running"
+        return 0
+    else
+        log_error "Citrea process is not running"
+        return 1
+    fi
+}
+
+check_port_availability() {
+    local port=$1
+    log_info "Checking port $port availability..."
+    
+    if netstat -tuln | grep ":$port " > /dev/null; then
+        log_warn "Port $port is already in use"
+        log_info "Process using port $port:"
+        lsof -i ":$port"
+        return 1
+    else
+        log_info "Port $port is available"
+        return 0
+    fi
+}
+
+verify_config_files() {
+    log_info "Verifying configuration files..."
+    local config_file="rollup_config.toml"
+    
+    if [ ! -f "$config_file" ]; then
+        log_error "Configuration file $config_file not found"
+        return 1
+    fi
+    
+    log_info "Contents of $config_file:"
+    echo "----------------------------------------"
+    grep -E "rpc_user|rpc_password|rpc_port" "$config_file"
+    echo "----------------------------------------"
+    
+    return 0
+}
+
+check_network_connectivity() {
+    local rpc_port=$1
+    log_info "Testing network connectivity..."
+    
+    if nc -zv localhost $rpc_port 2>/dev/null; then
+        log_info "Port $rpc_port is open locally"
+    else
+        log_warn "Port $rpc_port is not accessible locally"
+    fi
+    
+    if command -v ufw >/dev/null; then
+        log_info "UFW Firewall status:"
+        sudo ufw status | grep $rpc_port
+    fi
+}
+
+check_system_logs() {
+    log_info "Checking system logs for Citrea-related errors..."
+    
+    journalctl -u citrea --since "5 minutes ago" 2>/dev/null || \
+    log_warn "No Citrea service logs found in journald"
+    
+    tail -n 20 /var/log/syslog 2>/dev/null | grep -i "citrea" || \
+    log_warn "No Citrea-related messages found in syslog"
+}
+
+run_diagnostics() {
+    log_info "Running Citrea diagnostics..."
+    check_citrea_process
+    check_port_availability $rpc_port
+    check_port_availability $citrea_port
+    verify_config_files
+    check_network_connectivity $rpc_port
+    check_system_logs
+}
+
 # Check system requirements
 check_system_requirements() {
     log_info "Checking system resources..."
@@ -56,7 +136,7 @@ check_system_requirements() {
 # Check dependencies
 check_dependencies() {
     show_progress "Checking basic dependencies..."
-    local deps=(curl wget jq gpg tar netcat)
+    local deps=(curl wget jq gpg tar netcat lsof)
     
     for pkg in "${deps[@]}"; do
         if ! command -v $pkg &> /dev/null; then
@@ -91,6 +171,7 @@ verify_rpc_connection() {
     done
     
     log_error "Failed to establish RPC connection after $MAX_RETRIES attempts"
+    run_diagnostics  # Run diagnostics if RPC connection fails
     return 1
 }
 
@@ -128,6 +209,27 @@ setup_citrea() {
         return 1
     fi
     
+    return 0
+}
+
+start_citrea_node() {
+    show_progress "Starting Citrea node..."
+    
+    # Start the node in the background
+    ./citrea-v0.5.4-linux-amd64 node --config rollup_config.toml > citrea.log 2>&1 &
+    local pid=$!
+    
+    # Wait for node to start
+    sleep 10
+    
+    if ! ps -p $pid > /dev/null; then
+        show_error "Failed to start Citrea node"
+        log_error "Node startup failed. Check citrea.log for details:"
+        tail -n 20 citrea.log
+        return 1
+    fi
+    
+    log_info "Citrea node started with PID: $pid"
     return 0
 }
 
@@ -169,17 +271,42 @@ main() {
     echo "=================================="
     echo "1. Default Configuration"
     echo "2. Manual Configuration"
+    echo "3. Run Diagnostics Only"
     echo "=================================="
-    read -p "Choose option (1/2): " config_choice
+    read -p "Choose option (1/2/3): " config_choice
     
     case $config_choice in
         1)
             node_name="citrea-node"
             rpc_port="18443"
             citrea_port="8080"
+            
+            log_info "Running pre-installation diagnostics for default configuration..."
+            run_diagnostics
+            read -p "Continue with installation? (y/n): " continue_install
+            if [[ $continue_install != "y" ]]; then
+                log_info "Installation cancelled by user"
+                exit 0
+            fi
             ;;
         2)
             get_manual_config
+            
+            log_info "Running pre-installation diagnostics for manual configuration..."
+            run_diagnostics
+            read -p "Continue with installation? (y/n): " continue_install
+            if [[ $continue_install != "y" ]]; then
+                log_info "Installation cancelled by user"
+                exit 0
+            fi
+            ;;
+        3)
+            node_name="citrea-node"
+            rpc_port="18443"
+            citrea_port="8080"
+            log_info "Running standalone diagnostics..."
+            run_diagnostics
+            exit 0
             ;;
         *)
             log_error "Invalid choice"
@@ -191,6 +318,7 @@ main() {
     local setup_steps=(
         "check_dependencies"
         "setup_citrea"
+        "start_citrea_node"
         "verify_rpc_connection"
     )
     
@@ -198,12 +326,25 @@ main() {
         log_info "Executing step: $step"
         if ! $step; then
             log_error "Failed at step: $step"
+            log_info "Running post-failure diagnostics..."
+            run_diagnostics
             exit 1
+        fi
+        
+        # Run intermediate diagnostics after critical steps
+        if [[ "$step" == "start_citrea_node" ]]; then
+            log_info "Running post-startup diagnostics..."
+            run_diagnostics
         fi
     done
     
     show_node_info
     log_info "Installation completed successfully!"
+    
+    # Run final diagnostics
+    log_info "Running final health check..."
+    run_diagnostics
+    
     log_warn "Important: Node requires time for full synchronization"
     log_warn "Use the status check command above to monitor progress"
 }
