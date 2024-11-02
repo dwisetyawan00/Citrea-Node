@@ -455,6 +455,77 @@ get_manual_config() {
     gen_wallets=${gen_wallets:-Y}
 }
 
+setup_wallets() {
+    show_progress "Setting up wallets..."
+    
+    # 1. Generate EVM wallet terlebih dahulu
+    if [[ "${gen_wallets,,}" == "y" ]]; then
+        # Generate EVM wallet dan dapatkan private key
+        local evm_privkey=$(generate_evm_wallet)
+        if [ $? -ne 0 ]; then
+            show_error "Gagal generate EVM wallet"
+            return 1
+        fi
+        
+        # Gunakan EVM private key untuk generate Bitcoin wallet
+        generate_bitcoin_wallet "$evm_privkey"
+        if [ $? -ne 0 ]; then
+            show_error "Gagal generate Bitcoin wallet"
+            return 1
+        }
+        
+        # Tampilkan report wallet
+        show_wallet_report "$evm_privkey"
+        
+        # Backup wallets
+        backup_wallets
+    fi
+}
+
+# Fungsi untuk menampilkan report wallet yang lebih terstruktur
+show_wallet_report() {
+    local evm_privkey=$1
+    
+    echo -e "\n=== Wallet Generation Report ==="
+    echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
+    
+    # EVM Wallet Info
+    echo -e "\n1. EVM Wallet Details:"
+    echo "-------------------------"
+    if [ -f "$WALLET_DIR/${EVM_WALLET_NAME}_info.txt" ]; then
+        echo "Wallet Name: $EVM_WALLET_NAME"
+        echo "Private Key: ${evm_privkey}"
+        # Tambahkan informasi address EVM jika tersedia
+    fi
+    
+    # Bitcoin Wallet Info (derived from EVM)
+    echo -e "\n2. Bitcoin Wallet Details (Derived from EVM):"
+    echo "----------------------------------------"
+    if [ -f "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt" ]; then
+        echo "Wallet Name: $BTC_WALLET_NAME"
+        grep "Address:" "$WALLET_DIR/${BTC_WALLET_NAME}_info.txt"
+        echo "Derived from EVM Private Key: ${evm_privkey}"
+    fi
+    
+    # Storage Information
+    echo -e "\n3. Storage Information:"
+    echo "----------------------"
+    echo "Wallet Directory: $WALLET_DIR"
+    echo "Backup Directory: $BACKUP_DIR"
+    
+    # Important Notes
+    echo -e "\n4. Important Notes:"
+    echo "-----------------"
+    echo "- Keep your EVM private key safe as it's used to derive your Bitcoin wallet"
+    echo "- Backup your wallet information regularly"
+    echo "- Store backup encryption password in a secure location"
+    
+    # Save report to file
+    local report_file="$WALLET_DIR/wallet_generation_report_${TIMESTAMP}.txt"
+    echo "Report saved to: $report_file"
+}
+
+
 # Main script
 main() {
     clear
@@ -501,24 +572,16 @@ main() {
     fi
     
     # 5. Setup Citrea
-    setup_citrea
-    
-    # 6. Generate wallets after everything is running
-    if [[ "${gen_wallets,,}" == "y" ]]; then
-    # Generate EVM wallet first and get the private key
-    EVM_PRIVKEY=$(generate_evm_wallet)
-    # Use the EVM private key to generate Bitcoin wallet
-    generate_bitcoin_wallet "$EVM_PRIVKEY"
-    backup_wallets
-fi
-    
-    # 7. Show final information
-    show_node_info
-    show_wallet_info
+setup_citrea
 
-    show_progress "Instalasi selesai!"
-    show_warning "Penting: Node memerlukan waktu untuk sinkronisasi penuh"
-    show_warning "Gunakan perintah cek status di atas untuk memantau progress"
+# Generate dan setup wallets (urutan yang benar)
+setup_wallets
+
+# Show final information
+show_node_info
+show_progress "Instalasi selesai!"
+show_warning "Penting: Node memerlukan waktu untuk sinkronisasi penuh"
+show_warning "Gunakan perintah cek status di atas untuk memantau progress"
 }
 
 # Jalankan script
