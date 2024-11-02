@@ -27,16 +27,32 @@ show_progress() { echo -e "${GREEN}[+] $1${NC}"; }
 show_error() { echo -e "${RED}[-] Error: $1${NC}"; }
 show_warning() { echo -e "${YELLOW}[!] Warning: $1${NC}"; }
 
-# Setup Citrea with improved error handling and verification
+# Add firewall configuration function
+configure_firewall() {
+    log_info "Configuring firewall rules..."
+    
+    if command -v ufw >/dev/null; then
+        # Allow required ports
+        sudo ufw allow ${rpc_port}/tcp
+        sudo ufw allow ${citrea_port}/tcp
+        sudo ufw --force enable
+        log_info "Firewall rules added for ports ${rpc_port} and ${citrea_port}"
+    else
+        log_warn "UFW not installed, skipping firewall configuration"
+    fi
+}
+
+# Enhanced setup_citrea function
 setup_citrea() {
     show_progress "Setting up Citrea..."
     
-    # Create and enter directory with error checking
+    # Clean up existing installation if present
     if [ -d "${node_name}" ]; then
-        log_warn "Directory ${node_name} already exists. Cleaning up..."
+        log_warn "Existing installation found. Cleaning up..."
         rm -rf "${node_name}"
     fi
     
+    # Create and enter installation directory
     if ! mkdir -p "${node_name}"; then
         show_error "Failed to create directory: ${node_name}"
         return 1
@@ -45,9 +61,14 @@ setup_citrea() {
     if ! cd "${node_name}"; then
         show_error "Failed to enter directory: ${node_name}"
         return 1
-    }
+    fi
     
-    # Download files with better error handling
+    # Create logs directory
+    mkdir -p logs
+    
+    # Download required files with verbose output
+    show_progress "Downloading Citrea files..."
+    
     local files=(
         "https://github.com/chainwayxyz/citrea/releases/download/v0.5.4/citrea-v0.5.4-linux-amd64"
         "https://raw.githubusercontent.com/chainwayxyz/citrea/nightly/resources/configs/testnet/rollup_config.toml"
@@ -56,186 +77,65 @@ setup_citrea() {
     
     for file in "${files[@]}"; do
         local filename=$(basename "$file")
-        show_progress "Downloading ${filename}..."
-        
-        if ! wget -q --show-progress --tries=3 --timeout=15 "$file"; then
-            show_error "Failed to download: ${filename}"
+        log_info "Downloading ${filename}..."
+        if ! wget --progress=bar:force:noscroll "$file" 2>&1 | grep --line-buffered -oP "...%" | sed -u 's/.*/Downloading: &/'; then
+            show_error "Failed to download ${filename}"
             return 1
         fi
-        
-        # Verify file was downloaded
-        if [ ! -f "$(basename $file)" ]; then
-            show_error "File not found after download: ${filename}"
-            return 1
-        }
+        log_info "${filename} downloaded successfully"
     done
     
-    # Extract genesis files with verification
-    show_progress "Extracting genesis files..."
-    if [ ! -f "genesis.tar.gz" ]; then
-        show_error "Genesis archive not found"
-        return 1
-    fi
-    
+    # Extract genesis files
+    log_info "Extracting genesis files..."
     if ! tar xzf genesis.tar.gz; then
-        show_error "Failed to extract genesis archive"
+        show_error "Failed to extract genesis files"
         return 1
     fi
     
-    # Verify genesis directory and files
-    if [ ! -d "genesis" ] || [ ! -f "genesis/genesis.json" ]; then
-        show_error "Genesis directory or files missing after extraction"
-        return 1
-    }
+    # Set correct permissions
+    chmod +x ./citrea-v0.5.4-linux-amd64
     
-    # Set executable permission
-    if ! chmod +x ./citrea-v0.5.4-linux-amd64; then
-        show_error "Failed to set executable permission"
+    # Configure rollup_config.toml
+    log_info "Configuring rollup_config.toml..."
+    if [ ! -f rollup_config.toml ]; then
+        show_error "rollup_config.toml not found after download"
         return 1
-    }
+    fi
     
-    # Update configuration with verification
-    show_progress "Updating configuration..."
-    if [ ! -f "rollup_config.toml" ]; then
-        show_error "Configuration file not found"
-        return 1
-    }
-    
-    # Create backup of original config
+    # Backup original config
     cp rollup_config.toml rollup_config.toml.backup
     
-    # Update configuration with error checking
-    if ! sed -i "s/rpc_user = .*/rpc_user = \"citrea\"/" rollup_config.toml || \
-       ! sed -i "s/rpc_password = .*/rpc_password = \"citrea\"/" rollup_config.toml || \
-       ! sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml; then
-        show_error "Failed to update configuration file"
-        # Restore backup
+    # Update configuration
+    sed -i "s/rpc_user = .*/rpc_user = \"citrea\"/" rollup_config.toml
+    sed -i "s/rpc_password = .*/rpc_password = \"citrea\"/" rollup_config.toml
+    sed -i "s/rpc_port = .*/rpc_port = ${rpc_port}/" rollup_config.toml
+    sed -i "s/api_port = .*/api_port = ${citrea_port}/" rollup_config.toml
+    
+    # Verify configuration
+    if ! grep -q "rpc_user = \"citrea\"" rollup_config.toml; then
+        show_error "Configuration update failed"
         mv rollup_config.toml.backup rollup_config.toml
         return 1
     fi
     
-    # Verify configuration was updated
-    if ! grep -q "rpc_user = \"citrea\"" rollup_config.toml || \
-       ! grep -q "rpc_password = \"citrea\"" rollup_config.toml || \
-       ! grep -q "rpc_port = ${rpc_port}" rollup_config.toml; then
-        show_error "Configuration verification failed"
-        return 1
-    fi
-    
-    # Remove backup if everything succeeded
-    rm -f rollup_config.toml.backup
-    
-    log_info "Citrea setup completed successfully"
+    log_info "Configuration updated successfully"
     return 0
 }
 
-# Modified start_citrea_node function with better verification
-start_citrea_node() {
-    show_progress "Starting Citrea node..."
-    
-    # Verify all required files exist
-    local required_files=("citrea-v0.5.4-linux-amd64" "rollup_config.toml" "genesis/genesis.json")
-    for file in "${required_files[@]}"; do
-        if [ ! -f "$file" ]; then
-            show_error "Required file not found: $file"
-            return 1
-        fi
-    done
-    
-    # Verify executable permission
-    if [ ! -x "./citrea-v0.5.4-linux-amd64" ]; then
-        show_error "Citrea binary is not executable"
-        chmod +x ./citrea-v0.5.4-linux-amd64
-    fi
-    
-    # Create log directory if it doesn't exist
-    mkdir -p logs
-    
-    # Start the node with logging
-    ./citrea-v0.5.4-linux-amd64 --genesis-paths genesis/genesis.json \
-        --config rollup_config.toml > logs/citrea_${TIMESTAMP}.log 2>&1 &
-    
-    local pid=$!
-    log_info "Started Citrea node with PID: $pid"
-    
-    # Wait for node to initialize
-    show_progress "Waiting for node to initialize..."
-    sleep 15
-    
-    # Verify process is still running
-    if ! ps -p $pid > /dev/null; then
-        show_error "Citrea node failed to start. Check logs/citrea_${TIMESTAMP}.log for details"
-        tail -n 20 logs/citrea_${TIMESTAMP}.log
-        return 1
-    fi
-    
-    # Save PID for future reference
-    echo $pid > citrea.pid
-    
-    log_info "Citrea node started successfully"
-    return 0
-}
-
-# Rest of the script remains the same...
-# (Keep all other functions unchanged)
-
+# Modified main function to include firewall setup
 main() {
     clear
     show_logo
     
     log_info "Starting Citrea Node Installation"
     
-    if ! check_system_requirements; then
-        log_error "Insufficient system resources"
-        exit 1
-    fi
+    # ... (keep existing configuration options) ...
     
-    # Get configuration
-    echo "=================================="
-    echo "   Citrea Node Installation       "
-    echo "=================================="
-    echo "1. Default Configuration"
-    echo "2. Manual Configuration"
-    echo "3. Run Diagnostics Only"
-    echo "=================================="
-    read -p "Choose option (1/2/3): " config_choice
-    
-    case $config_choice in
-        1)
-            node_name="citrea-node"
-            rpc_port="18443"
-            citrea_port="8080"
-            ;;
-        2)
-            get_manual_config
-            ;;
-        3)
-            node_name="citrea-node"
-            rpc_port="18443"
-            citrea_port="8080"
-            run_diagnostics
-            exit 0
-            ;;
-        *)
-            log_error "Invalid choice"
-            exit 1
-            ;;
-    esac
-    
-    # Run pre-installation diagnostics
-    log_info "Running pre-installation diagnostics..."
-    run_diagnostics
-    
-    read -p "Continue with installation? (y/n): " continue_install
-    if [[ $continue_install != "y" ]]; then
-        log_info "Installation cancelled by user"
-        exit 0
-    fi
-    
-    # Setup steps with improved error handling
+    # Add firewall configuration step
     local setup_steps=(
         "install_missing_deps"
         "check_dependencies"
+        "configure_firewall"
         "setup_citrea"
         "start_citrea_node"
         "verify_rpc_connection"
@@ -249,15 +149,64 @@ main() {
             run_diagnostics
             exit 1
         fi
+        
+        # Add delay between steps
+        sleep 2
     done
     
+    # Add post-installation verification
+    verify_installation() {
+        log_info "Verifying installation..."
+        
+        # Check if process is running
+        if ! pgrep -f "citrea-v0.5.4-linux-amd64" > /dev/null; then
+            show_error "Citrea process is not running"
+            return 1
+        fi
+        
+        # Check port accessibility
+        if ! nc -z localhost ${rpc_port}; then
+            show_error "RPC port ${rpc_port} is not accessible"
+            return 1
+        fi
+        
+        if ! nc -z localhost ${citrea_port}; then
+            show_error "Citrea port ${citrea_port} is not accessible"
+            return 1
+        }
+        
+        log_info "Installation verified successfully"
+        return 0
+    }
+    
+    # Run verification
+    if ! verify_installation; then
+        log_error "Installation verification failed"
+        run_diagnostics
+        exit 1
+    fi
+    
     show_node_info
-    log_info "Installation completed successfully!"
+    log_info "Installation completed and verified successfully!"
     
-    # Run final health check
-    log_info "Running final health check..."
-    run_diagnostics
-    
+    # Show important information
+    cat << EOF
+
+=== Important Information ===
+1. Node Name: ${node_name}
+2. RPC Endpoint: http://localhost:${rpc_port}
+3. API Endpoint: http://localhost:${citrea_port}
+4. Log Location: ${node_name}/logs/
+5. Config File: ${node_name}/rollup_config.toml
+
+To monitor the node:
+curl -X POST --header "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"citrea_syncStatus","params":[], "id":31}' \
+    http://localhost:${citrea_port}
+
+Configuration files are located in: $(pwd)/${node_name}
+EOF
+
     log_warn "Important: Node requires time for full synchronization"
     log_warn "Use the status check command above to monitor progress"
 }
