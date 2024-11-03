@@ -18,11 +18,11 @@
 | OS | Ubuntu 20.04 | Ubuntu 22.04 |
 | Ports | 30333, 9933, 9944 | 30333, 9933, 9944 |
 
-# Install Docker
+# Update & Upgrade dependencies
 ```bash
 sudo apt update && sudo apt upgrade -y
 ```
-### Install dependencies
+### Install dependencies tambahan
 ```bash
 sudo apt install -y apt-transport-https ca-certificates curl software-properties-common
 sudo apt-get install -y net-tools netcat curl wget jq gpg tar lsof
