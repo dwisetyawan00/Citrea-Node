@@ -45,6 +45,7 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/create-wal
 - buat wallet btc
 - beri nama wallet
 - ulangi lagi *`./create-wallet.sh`* 
+- backup
 - done
 
 # 🗃️ Backup wallet anda
