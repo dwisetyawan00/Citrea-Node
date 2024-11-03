@@ -39,6 +39,27 @@ wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/citrea-set
 ```bash
 wget https://raw.githubusercontent.com/dwisetyawan00/Citrea-Node/main/create-wallet.sh && chmod +x create-wallet.sh && sudo ./create-wallet.sh
 ```
+- buat wallet evm
+- beri nama wallet
+- ulangi dengan command *`./create-wallet.sh`* 
+- buat wallet btc
+- beri nama wallet
+- ulangi lagi *`./create-wallet.sh`* 
+- done
+
+# 🗃️ Backup wallet anda
+```bash
+cd $HOME/.citrea/backups
+```
+- lihat nama file anda dengan command *`ls`*
+```bash
+gpg --output namafile_tanpa.gpg --decrypt namafile_dengan.gpg
+```
+- Extract file
+```bash
+tar -xzf namafile
+```
+- DONE cek directory dan buka simpan private key
 
 # 📝 Check Logs
 ```bash
